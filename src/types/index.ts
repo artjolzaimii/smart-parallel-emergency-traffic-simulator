@@ -6,3 +6,4 @@ export * from './congestion';
 export * from './metrics';
 export * from './worker';
 export * from './websocket';
+export * from './map';

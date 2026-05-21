@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import 'leaflet/dist/leaflet.css';
 
 @theme inline {
   --font-sans: var(--font-geist-sans);
@@ -57,4 +58,40 @@ input[type='range']::-moz-range-thumb {
 select option {
   background-color: #1f2937;
   color: #e5e7eb;
+}
+
+/* Emergency vehicle marker pulse — referenced by Leaflet divIcon inline style */
+@keyframes marker-pulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.8), 0 0 2px rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 1), 0 0 8px rgba(239, 68, 68, 0.6);
+  }
+}
+
+/* Prevent Leaflet tile images from being constrained by Tailwind's image reset */
+.leaflet-container img.leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+/* Keep Leaflet popups and tooltips readable on dark background */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #1f2937;
+  color: #e5e7eb;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.leaflet-tooltip {
+  background: #1f2937;
+  border: 1px solid #374151;
+  color: #e5e7eb;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.leaflet-tooltip::before {
+  border-top-color: #374151;
 }
