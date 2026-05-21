@@ -4,6 +4,7 @@ import { type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { Car, AlertTriangle, Clock, Cpu } from 'lucide-react';
 import { PerformanceChart } from '@/src/components/analytics/PerformanceChart';
+import { EmergencyMetrics } from '@/src/components/analytics/EmergencyMetrics';
 import { useMetricsStore } from '@/src/store/metricsStore';
 
 interface MetricCardProps {
@@ -15,14 +16,7 @@ interface MetricCardProps {
   subtext?: string;
 }
 
-function MetricCard({
-  icon,
-  label,
-  value,
-  unit,
-  valueColor,
-  subtext,
-}: MetricCardProps) {
+function MetricCard({ icon, label, value, unit, valueColor, subtext }: MetricCardProps) {
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
       <div className="mb-2 flex items-center gap-2">
@@ -32,16 +26,20 @@ function MetricCard({
         </span>
       </div>
       <div className="flex items-baseline gap-1">
-        <span className={clsx('font-mono text-2xl font-bold', valueColor)}>
-          {value}
-        </span>
+        <span className={clsx('font-mono text-2xl font-bold', valueColor)}>{value}</span>
         {unit && <span className="text-xs text-gray-600">{unit}</span>}
       </div>
-      {subtext && (
-        <p className="mt-0.5 text-xs text-gray-600">{subtext}</p>
-      )}
+      {subtext && <p className="mt-0.5 text-xs text-gray-600">{subtext}</p>}
     </div>
   );
+}
+
+function formatTravelTime(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return sec > 0 ? `${min}m ${sec}s` : `${min}m`;
 }
 
 export function MetricsPanel() {
@@ -64,7 +62,7 @@ export function MetricsPanel() {
         label="Active Vehicles"
         value={String(metrics.activeVehicles)}
         valueColor="text-cyan-400"
-        subtext="across all segments"
+        subtext="vehicles currently on the map"
       />
 
       <MetricCard
@@ -73,20 +71,15 @@ export function MetricsPanel() {
         value={String(congestionPct)}
         unit="%"
         valueColor={congestionColor}
-        subtext="network average"
+        subtext="avg simulated road congestion"
       />
 
       <MetricCard
         icon={<Clock className="h-4 w-4" />}
         label="Emergency Response"
-        value={
-          metrics.avgEmergencyResponseMs === 0
-            ? '—'
-            : metrics.avgEmergencyResponseMs.toFixed(0)
-        }
-        unit={metrics.avgEmergencyResponseMs > 0 ? 'ms' : undefined}
+        value={metrics.avgEmergencyResponseMs === 0 ? '—' : formatTravelTime(metrics.avgEmergencyResponseMs)}
         valueColor="text-yellow-400"
-        subtext="avg response time"
+        subtext="estimated travel time to hospital"
       />
 
       <MetricCard
@@ -94,8 +87,12 @@ export function MetricsPanel() {
         label="Worker Threads"
         value={String(metrics.workerThreadCount)}
         valueColor="text-purple-400"
-        subtext="active threads"
+        subtext="active parallel workers"
       />
+
+      <hr className="border-gray-800" />
+
+      <EmergencyMetrics />
 
       <hr className="border-gray-800" />
 

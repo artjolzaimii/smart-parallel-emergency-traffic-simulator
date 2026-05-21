@@ -82,6 +82,7 @@ class WebSocketService {
     useVehicleStore.getState().setVehicles(snapshot.vehicles);
     useMetricsStore.getState().updateMetrics(snapshot.metrics);
     useMetricsStore.getState().setBenchmark(snapshot.benchmark);
+    useMetricsStore.getState().setRouting(snapshot.routingResult);
   }
 
   private scheduleReconnect(): void {

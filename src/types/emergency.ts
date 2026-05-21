@@ -1,4 +1,23 @@
-import type { GeoPosition } from './simulation';
+import type { GeoPosition, SimulationMode } from './simulation';
+
+export type RouteStrategy = 'standard' | 'avoid-congestion' | 'avoid-blocked' | 'prefer-speed';
+
+export interface RoutingResult {
+  found: boolean;
+  waypoints: GeoPosition[];
+  nodeIds: string[];
+  totalCostS: number;
+  totalDistanceM: number;
+  estimatedTravelTimeS: number;
+  roadsEvaluated: number;
+  routingComputationMs: number;
+  sequentialMs: number;
+  parallelMs: number | null;
+  speedupFactor: number | null;
+  strategy: RouteStrategy;
+  mode: SimulationMode;
+  triggeredAt: number;
+}
 
 export type EmergencyType = 'fire' | 'medical' | 'police' | 'accident';
 export type EmergencyPriority = 1 | 2 | 3;

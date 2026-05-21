@@ -38,7 +38,7 @@ export class MessageRouter {
         this.engine.updateConfig({ scenario: msg.payload?.scenario as SimulationScenario });
         break;
       case 'TRIGGER_EMERGENCY':
-        console.log('[Engine] Emergency triggered — stub for Milestone 4');
+        this.engine.triggerEmergency();
         break;
       default:
         console.warn('[WS] Unknown message type:', msg.type);

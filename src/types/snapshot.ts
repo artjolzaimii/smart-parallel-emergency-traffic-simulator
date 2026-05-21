@@ -6,6 +6,7 @@ import type {
   EmergencyRouteData,
 } from './map';
 import type { PerformanceMetrics, BenchmarkComparison } from './metrics';
+import type { RoutingResult } from './emergency';
 
 export interface SimulationSnapshot {
   tick: number;
@@ -18,4 +19,5 @@ export interface SimulationSnapshot {
   emergencyRoute: EmergencyRouteData;
   metrics: PerformanceMetrics;
   benchmark: BenchmarkComparison | null;
+  routingResult: RoutingResult | null;
 }

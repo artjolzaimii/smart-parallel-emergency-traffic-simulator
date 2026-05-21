@@ -13,14 +13,18 @@ export function PerformanceChart() {
     ? Math.min(100, (1 / benchmark.sequentialTickMs) * 100)
     : 0;
 
+  const hasSpeedup = benchmark !== null;
+  const isActualSpeedup = hasSpeedup && benchmark!.speedupFactor >= 1.0;
+
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">
           Parallel vs Sequential
         </span>
         <BarChart2 className="h-3.5 w-3.5 text-gray-700" />
       </div>
+      <p className="mb-3 text-xs text-gray-700">vehicle tick computation time</p>
 
       <div className="space-y-3">
         <BarRow
@@ -37,10 +41,16 @@ export function PerformanceChart() {
         />
       </div>
 
-      {benchmark ? (
-        <p className="mt-3 text-center font-mono text-xs text-cyan-500">
-          {benchmark.speedupFactor.toFixed(2)}× speedup
-        </p>
+      {hasSpeedup ? (
+        isActualSpeedup ? (
+          <p className="mt-3 text-center font-mono text-xs text-cyan-500">
+            {benchmark!.speedupFactor.toFixed(2)}× speedup
+          </p>
+        ) : (
+          <p className="mt-3 text-center font-mono text-xs text-yellow-500">
+            Parallel overhead detected
+          </p>
+        )
       ) : (
         <p className="mt-3 text-center text-xs text-gray-700">
           Start simulation to compare

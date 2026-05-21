@@ -6,10 +6,18 @@ import type {
   EmergencyRouteData,
 } from '../../types/map';
 import type { PerformanceMetrics, BenchmarkComparison } from '../../types/metrics';
+import type { RoutingResult } from '../../types/emergency';
 import type { SimulationSnapshot } from '../../types/snapshot';
 import { SequentialExecutor } from './SequentialExecutor';
 import { ParallelExecutor } from './ParallelExecutor';
 import { generateFleet } from '../utils/fleetGenerator';
+import { EmergencyRouter } from '../emergency/EmergencyRouter';
+import {
+  TIRANA_NODES,
+  TIRANA_BASE_EDGES,
+  AMBULANCE_START_NODE,
+  HOSPITAL_NODE,
+} from '../pathfinding/tiranaRoadGraph';
 import {
   MOCK_TRAFFIC_LIGHTS,
   MOCK_CONGESTION_SEGMENTS,
@@ -32,6 +40,18 @@ const ZERO_METRICS: PerformanceMetrics = {
   cpuUsagePercent: 0,
 };
 
+// Edge IDs whose congestion evolves each tick (representative set)
+const DYNAMIC_EDGES = [
+  { id: 'E01',  phase: 0.00 },
+  { id: 'E02',  phase: 1.05 },
+  { id: 'E03',  phase: 2.10 },
+  { id: 'E08',  phase: 0.52 },
+  { id: 'E11',  phase: 1.73 },
+  { id: 'E12',  phase: 0.87 },
+  { id: 'E01r', phase: 0.30 },
+  { id: 'E02r', phase: 1.35 },
+];
+
 export class SimulationEngine {
   private status: SimulationStatus = 'idle';
   private config: SimulationConfig = { ...DEFAULT_CONFIG };
@@ -40,16 +60,19 @@ export class SimulationEngine {
   private startedAt: number | null = null;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  private routing = false;
 
   private vehicles: VehicleMarkerData[] = generateFleet(DEFAULT_CONFIG.vehicleCount);
   private readonly trafficLights: TrafficLightMarkerData[] = [...MOCK_TRAFFIC_LIGHTS];
-  private readonly congestionSegments: CongestionSegmentData[] = [...MOCK_CONGESTION_SEGMENTS];
-  private readonly emergencyRoute: EmergencyRouteData = { ...MOCK_EMERGENCY_ROUTE };
+  private congestionSegments: CongestionSegmentData[] = MOCK_CONGESTION_SEGMENTS.map((s) => ({ ...s }));
+  private emergencyRoute: EmergencyRouteData = { ...MOCK_EMERGENCY_ROUTE };
   private metrics: PerformanceMetrics = { ...ZERO_METRICS };
   private benchmark: BenchmarkComparison | null = null;
+  private routingResult: RoutingResult | null = null;
 
   private readonly sequential = new SequentialExecutor();
   private readonly parallel = new ParallelExecutor();
+  private readonly router = new EmergencyRouter(TIRANA_NODES, TIRANA_BASE_EDGES);
   private onSnapshotCb?: (s: SimulationSnapshot) => void;
 
   setOnSnapshot(cb: (s: SimulationSnapshot) => void): void {
@@ -78,8 +101,11 @@ export class SimulationEngine {
     this.elapsedMs = 0;
     this.startedAt = null;
     this.vehicles = generateFleet(this.config.vehicleCount);
+    this.congestionSegments = MOCK_CONGESTION_SEGMENTS.map((s) => ({ ...s }));
+    this.emergencyRoute = { ...MOCK_EMERGENCY_ROUTE };
     this.metrics = { ...ZERO_METRICS };
     this.benchmark = null;
+    this.routingResult = null;
     this.emit();
   }
 
@@ -98,6 +124,11 @@ export class SimulationEngine {
     this.emit();
   }
 
+  triggerEmergency(): void {
+    if (this.routing) return;
+    void this.runEmergencyRouting();
+  }
+
   getSnapshot(): SimulationSnapshot {
     return {
       tick: this.tick,
@@ -106,10 +137,11 @@ export class SimulationEngine {
       config: { ...this.config },
       vehicles: [...this.vehicles],
       trafficLights: [...this.trafficLights],
-      congestionSegments: [...this.congestionSegments],
+      congestionSegments: this.congestionSegments.map((s) => ({ ...s })),
       emergencyRoute: { ...this.emergencyRoute },
       metrics: { ...this.metrics },
       benchmark: this.benchmark,
+      routingResult: this.routingResult,
     };
   }
 
@@ -131,7 +163,6 @@ export class SimulationEngine {
   }
 
   private async tick_(): Promise<void> {
-    // Prevent concurrent tick execution when workers take longer than the interval
     if (this.status !== 'running' || this.ticking) return;
     this.ticking = true;
 
@@ -156,12 +187,16 @@ export class SimulationEngine {
       this.tick += 1;
       this.elapsedMs = this.startedAt ? Date.now() - this.startedAt : 0;
 
+      this.evolveCongestion();
+
       const wallMs = performance.now() - wallStart;
 
       this.metrics = {
         activeVehicles: this.vehicles.length,
         congestionLevel: 0.3 + Math.sin(this.tick * 0.04) * 0.25,
-        avgEmergencyResponseMs: 0,
+        avgEmergencyResponseMs: this.routingResult?.estimatedTravelTimeS
+          ? this.routingResult.estimatedTravelTimeS * 1000
+          : 0,
         workerThreadCount: this.config.mode === 'parallel' ? 4 : 0,
         tickRateHz: Math.round(1000 / Math.max(1, wallMs)),
         cpuUsagePercent: 0,
@@ -179,6 +214,39 @@ export class SimulationEngine {
       this.emit();
     } finally {
       this.ticking = false;
+    }
+  }
+
+  private evolveCongestion(): void {
+    const t = this.tick;
+    const updates = DYNAMIC_EDGES.map(({ id, phase }) => ({
+      edgeId: id,
+      congestion: 0.35 + Math.sin(t * 0.035 + phase) * 0.30,
+    }));
+    this.router.updateCongestion(updates);
+
+    // Drift the visual congestion segments in sync
+    this.congestionSegments = this.congestionSegments.map((seg, i) => ({
+      ...seg,
+      density: Math.max(0.05, Math.min(0.95, seg.density + Math.sin(t * 0.04 + i * 1.2) * 0.015)),
+    }));
+  }
+
+  private async runEmergencyRouting(): Promise<void> {
+    this.routing = true;
+    try {
+      const result = await this.router.findRouteBest(
+        AMBULANCE_START_NODE,
+        HOSPITAL_NODE,
+        this.config.mode,
+      );
+      this.routingResult = result;
+      if (result.found) {
+        this.emergencyRoute = { ...this.emergencyRoute, waypoints: result.waypoints };
+      }
+      this.emit();
+    } finally {
+      this.routing = false;
     }
   }
 
