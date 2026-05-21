@@ -12,6 +12,7 @@ interface SimulationStore {
   startedAt: number | null;
   setStatus: (status: SimulationStatus) => void;
   updateConfig: (patch: Partial<SimulationConfig>) => void;
+  setTickAndElapsed: (tick: number, elapsedMs: number) => void;
   incrementTick: () => void;
   reset: () => void;
 }
@@ -32,6 +33,7 @@ export const useSimulationStore = create<SimulationStore>()((set) => ({
   setStatus: (status) => set({ status }),
   updateConfig: (patch) =>
     set((state) => ({ config: { ...state.config, ...patch } })),
+  setTickAndElapsed: (tick, elapsedMs) => set({ tick, elapsedMs }),
   incrementTick: () => set((state) => ({ tick: state.tick + 1 })),
   reset: () => set({ status: 'idle', tick: 0, elapsedMs: 0, startedAt: null }),
 }));

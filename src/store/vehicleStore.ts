@@ -1,10 +1,10 @@
 import { create } from 'zustand';
-import type { Vehicle } from '@/src/types/vehicle';
+import type { VehicleMarkerData } from '@/src/types/map';
 
 interface VehicleStore {
-  vehicles: Vehicle[];
-  setVehicles: (vehicles: Vehicle[]) => void;
-  updateVehicle: (id: string, patch: Partial<Vehicle>) => void;
+  vehicles: VehicleMarkerData[];
+  setVehicles: (vehicles: VehicleMarkerData[]) => void;
+  updateVehicle: (id: string, patch: Partial<VehicleMarkerData>) => void;
   clear: () => void;
 }
 

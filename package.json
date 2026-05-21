@@ -4,6 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:next": "next dev",
+    "dev:websocket": "tsx watch server/index.ts",
+    "dev:all": "concurrently --names NEXT,WS --prefix-colors cyan,yellow \"npm run dev:next\" \"npm run dev:websocket\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -32,6 +35,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
+    "tsx": "^4.22.3",
     "typescript": "^5"
   }
 }

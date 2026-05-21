@@ -1,9 +1,15 @@
 'use client';
 
 import { useSimulationStore } from '@/src/store/simulationStore';
+import { wsService } from '@/src/services/websocketService';
 
 export function SpeedSlider() {
-  const { config, updateConfig } = useSimulationStore();
+  const { config } = useSimulationStore();
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const speed = Number(e.target.value);
+    wsService.send('SET_SPEED', { speed });
+  }
 
   return (
     <div>
@@ -19,7 +25,7 @@ export function SpeedSlider() {
         max={10}
         step={1}
         value={config.speed}
-        onChange={(e) => updateConfig({ speed: Number(e.target.value) })}
+        onChange={handleChange}
         className="w-full cursor-pointer accent-cyan-500"
       />
       <div className="mt-1 flex justify-between text-xs text-gray-600">

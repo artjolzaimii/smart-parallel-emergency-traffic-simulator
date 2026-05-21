@@ -1,3 +1,4 @@
+import { DashboardShell } from '@/src/components/dashboard/DashboardShell';
 import { Header } from '@/src/components/dashboard/Header';
 import { Sidebar } from '@/src/components/dashboard/Sidebar';
 import { SimulationMap } from '@/src/components/map/SimulationMap';
@@ -6,14 +7,16 @@ import { StatusBar } from '@/src/components/dashboard/StatusBar';
 
 export default function Page() {
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-gray-950 text-gray-100">
-      <Header />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar />
-        <SimulationMap />
-        <MetricsPanel />
+    <DashboardShell>
+      <div className="flex h-screen flex-col overflow-hidden bg-gray-950 text-gray-100">
+        <Header />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar />
+          <SimulationMap />
+          <MetricsPanel />
+        </div>
+        <StatusBar />
       </div>
-      <StatusBar />
-    </div>
+    </DashboardShell>
   );
 }

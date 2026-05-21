@@ -3,6 +3,7 @@ import { VehicleLayer } from '@/src/components/map/VehicleMarker';
 import { TrafficLightLayer } from '@/src/components/map/TrafficLightOverlay';
 import { EmergencyRouteLayer } from '@/src/components/map/RoutePolyline';
 import { CongestionLayer } from '@/src/components/map/CongestionHeatmap';
+import { useVehicleStore } from '@/src/store/vehicleStore';
 import {
   TIRANA_MAP_CONFIG,
   MOCK_VEHICLES,
@@ -11,7 +12,6 @@ import {
   MOCK_CONGESTION_SEGMENTS,
 } from '@/data/scenarios/tiranaMockData';
 
-// CartoDB Dark Matter — ideal tile layer for dark smart-city dashboards
 const TILE_URL =
   'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 const TILE_ATTRIBUTION =
@@ -19,6 +19,8 @@ const TILE_ATTRIBUTION =
 
 export default function MapClient() {
   const { center, zoom } = TIRANA_MAP_CONFIG;
+  const storeVehicles = useVehicleStore((s) => s.vehicles);
+  const vehicles = storeVehicles.length > 0 ? storeVehicles : MOCK_VEHICLES;
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
@@ -36,17 +38,10 @@ export default function MapClient() {
           subdomains="abcd"
         />
 
-        {/* Congestion road segments — rendered first so markers appear above */}
         <CongestionLayer segments={MOCK_CONGESTION_SEGMENTS} />
-
-        {/* Emergency priority route */}
         <EmergencyRouteLayer route={MOCK_EMERGENCY_ROUTE} />
-
-        {/* Traffic light markers */}
         <TrafficLightLayer lights={MOCK_TRAFFIC_LIGHTS} />
-
-        {/* Vehicle markers — top layer */}
-        <VehicleLayer vehicles={MOCK_VEHICLES} />
+        <VehicleLayer vehicles={vehicles} />
       </MapContainer>
     </div>
   );

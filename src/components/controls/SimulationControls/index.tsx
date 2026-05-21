@@ -3,9 +3,12 @@
 import { Play, Pause, RotateCcw } from 'lucide-react';
 import { Button } from '@/src/components/ui/Button';
 import { useSimulationStore } from '@/src/store/simulationStore';
+import { useWsStore } from '@/src/store/wsStore';
+import { wsService } from '@/src/services/websocketService';
 
 export function SimulationControls() {
-  const { status, setStatus, reset } = useSimulationStore();
+  const status = useSimulationStore((s) => s.status);
+  const wsConnected = useWsStore((s) => s.status === 'connected');
 
   const isRunning = status === 'running';
   const isPaused  = status === 'paused';
@@ -17,19 +20,21 @@ export function SimulationControls() {
         variant="primary"
         size="md"
         fullWidth
-        disabled={isRunning}
-        onClick={() => setStatus('running')}
+        disabled={!wsConnected || isRunning}
+        onClick={() => wsService.send('START_SIMULATION')}
       >
         <Play className="h-4 w-4" />
-        Start Simulation
+        {isIdle ? 'Start Simulation' : 'Resume'}
       </Button>
 
       <Button
         variant={isPaused ? 'warning' : 'secondary'}
         size="md"
         fullWidth
-        disabled={isIdle}
-        onClick={() => setStatus(isPaused ? 'running' : 'paused')}
+        disabled={!wsConnected || isIdle}
+        onClick={() =>
+          wsService.send(isPaused ? 'START_SIMULATION' : 'PAUSE_SIMULATION')
+        }
       >
         <Pause className="h-4 w-4" />
         {isPaused ? 'Resume' : 'Pause'}
@@ -39,8 +44,8 @@ export function SimulationControls() {
         variant="ghost"
         size="md"
         fullWidth
-        disabled={isIdle}
-        onClick={reset}
+        disabled={!wsConnected || isIdle}
+        onClick={() => wsService.send('RESET_SIMULATION')}
       >
         <RotateCcw className="h-4 w-4" />
         Reset

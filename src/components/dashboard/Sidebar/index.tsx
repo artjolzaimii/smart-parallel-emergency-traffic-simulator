@@ -8,12 +8,13 @@ import { SimulationControls } from '@/src/components/controls/SimulationControls
 import { SpeedSlider } from '@/src/components/controls/SpeedSlider';
 import { ScenarioSelector } from '@/src/components/controls/ScenarioSelector';
 import { useSimulationStore } from '@/src/store/simulationStore';
+import { wsService } from '@/src/services/websocketService';
 import type { SimulationMode } from '@/src/types/simulation';
 
 const VEHICLE_COUNTS = [10, 25, 50, 100, 200, 500];
 
 export function Sidebar() {
-  const { config, updateConfig } = useSimulationStore();
+  const { config } = useSimulationStore();
 
   return (
     <aside className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900">
@@ -36,7 +37,7 @@ export function Sidebar() {
               <select
                 value={config.vehicleCount}
                 onChange={(e) =>
-                  updateConfig({ vehicleCount: Number(e.target.value) })
+                  wsService.send('SET_VEHICLE_COUNT', { vehicleCount: Number(e.target.value) })
                 }
                 className="w-full rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 focus:border-cyan-600 focus:outline-none"
               >
@@ -59,12 +60,12 @@ export function Sidebar() {
             <ModeButton
               label="Parallel"
               active={config.mode === 'parallel'}
-              onClick={() => updateConfig({ mode: 'parallel' as SimulationMode })}
+              onClick={() => wsService.send('SET_MODE', { mode: 'parallel' as SimulationMode })}
             />
             <ModeButton
               label="Sequential"
               active={config.mode === 'sequential'}
-              onClick={() => updateConfig({ mode: 'sequential' as SimulationMode })}
+              onClick={() => wsService.send('SET_MODE', { mode: 'sequential' as SimulationMode })}
             />
           </div>
         </Section>
@@ -72,7 +73,12 @@ export function Sidebar() {
         <Divider />
 
         <Section label="Emergency">
-          <Button variant="danger" size="md" fullWidth>
+          <Button
+            variant="danger"
+            size="md"
+            fullWidth
+            onClick={() => wsService.send('TRIGGER_EMERGENCY')}
+          >
             <Siren className="h-4 w-4" />
             Trigger Emergency
           </Button>

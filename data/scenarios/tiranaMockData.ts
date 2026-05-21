@@ -4,7 +4,7 @@ import type {
   CongestionSegmentData,
   EmergencyRouteData,
   MapViewConfig,
-} from '@/src/types/map';
+} from '../../src/types/map';
 
 export const TIRANA_MAP_CONFIG: MapViewConfig = {
   center: { lat: 41.3275, lng: 19.8189 },

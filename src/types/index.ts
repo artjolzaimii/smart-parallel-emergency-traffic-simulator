@@ -7,3 +7,4 @@ export * from './metrics';
 export * from './worker';
 export * from './websocket';
 export * from './map';
+export * from './snapshot';
