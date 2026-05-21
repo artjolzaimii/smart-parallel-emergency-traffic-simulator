@@ -11,11 +11,11 @@ export function SimulationControls() {
   const wsConnected = useWsStore((s) => s.status === 'connected');
 
   const isRunning = status === 'running';
-  const isPaused  = status === 'paused';
   const isIdle    = status === 'idle';
 
   return (
     <div className="space-y-2">
+      {/* Start when idle, Resume when paused — disabled while actively running */}
       <Button
         variant="primary"
         size="md"
@@ -27,17 +27,16 @@ export function SimulationControls() {
         {isIdle ? 'Start Simulation' : 'Resume'}
       </Button>
 
+      {/* Pause — only active while the simulation is running */}
       <Button
-        variant={isPaused ? 'warning' : 'secondary'}
+        variant="secondary"
         size="md"
         fullWidth
-        disabled={!wsConnected || isIdle}
-        onClick={() =>
-          wsService.send(isPaused ? 'START_SIMULATION' : 'PAUSE_SIMULATION')
-        }
+        disabled={!wsConnected || !isRunning}
+        onClick={() => wsService.send('PAUSE_SIMULATION')}
       >
         <Pause className="h-4 w-4" />
-        {isPaused ? 'Resume' : 'Pause'}
+        Pause
       </Button>
 
       <Button

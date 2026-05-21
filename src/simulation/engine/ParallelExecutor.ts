@@ -41,10 +41,17 @@ export class ParallelExecutor {
     task: { vehicles: VehicleMarkerData[]; tick: number },
   ): Promise<{ vehicles: VehicleMarkerData[] }> {
     return new Promise((resolve, reject) => {
-      worker.once('message', (result: { vehicles: VehicleMarkerData[] }) =>
-        resolve(result),
-      );
-      worker.once('error', reject);
+      // Cross-remove handlers so neither accumulates after the other fires
+      const onMessage = (result: { vehicles: VehicleMarkerData[] }) => {
+        worker.off('error', onError);
+        resolve(result);
+      };
+      const onError = (err: Error) => {
+        worker.off('message', onMessage);
+        reject(err);
+      };
+      worker.once('message', onMessage);
+      worker.once('error', onError);
       worker.postMessage(task);
     });
   }

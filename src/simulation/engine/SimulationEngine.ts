@@ -9,8 +9,8 @@ import type { PerformanceMetrics, BenchmarkComparison } from '../../types/metric
 import type { SimulationSnapshot } from '../../types/snapshot';
 import { SequentialExecutor } from './SequentialExecutor';
 import { ParallelExecutor } from './ParallelExecutor';
+import { generateFleet } from '../utils/fleetGenerator';
 import {
-  MOCK_VEHICLES,
   MOCK_TRAFFIC_LIGHTS,
   MOCK_CONGESTION_SEGMENTS,
   MOCK_EMERGENCY_ROUTE,
@@ -39,11 +39,12 @@ export class SimulationEngine {
   private elapsedMs = 0;
   private startedAt: number | null = null;
   private intervalId: ReturnType<typeof setInterval> | null = null;
+  private ticking = false;
 
-  private vehicles: VehicleMarkerData[] = [...MOCK_VEHICLES];
-  private trafficLights: TrafficLightMarkerData[] = [...MOCK_TRAFFIC_LIGHTS];
-  private congestionSegments: CongestionSegmentData[] = [...MOCK_CONGESTION_SEGMENTS];
-  private emergencyRoute: EmergencyRouteData = { ...MOCK_EMERGENCY_ROUTE };
+  private vehicles: VehicleMarkerData[] = generateFleet(DEFAULT_CONFIG.vehicleCount);
+  private readonly trafficLights: TrafficLightMarkerData[] = [...MOCK_TRAFFIC_LIGHTS];
+  private readonly congestionSegments: CongestionSegmentData[] = [...MOCK_CONGESTION_SEGMENTS];
+  private readonly emergencyRoute: EmergencyRouteData = { ...MOCK_EMERGENCY_ROUTE };
   private metrics: PerformanceMetrics = { ...ZERO_METRICS };
   private benchmark: BenchmarkComparison | null = null;
 
@@ -71,11 +72,12 @@ export class SimulationEngine {
 
   reset(): void {
     this.clearLoop();
+    this.ticking = false;
     this.status = 'idle';
     this.tick = 0;
     this.elapsedMs = 0;
     this.startedAt = null;
-    this.vehicles = [...MOCK_VEHICLES];
+    this.vehicles = generateFleet(this.config.vehicleCount);
     this.metrics = { ...ZERO_METRICS };
     this.benchmark = null;
     this.emit();
@@ -84,8 +86,16 @@ export class SimulationEngine {
   updateConfig(patch: Partial<SimulationConfig>): void {
     const wasRunning = this.status === 'running';
     if (wasRunning) this.clearLoop();
+
+    const prevCount = this.config.vehicleCount;
     this.config = { ...this.config, ...patch };
+
+    if (patch.vehicleCount !== undefined && patch.vehicleCount !== prevCount) {
+      this.vehicles = generateFleet(this.config.vehicleCount);
+    }
+
     if (wasRunning) this.scheduleLoop();
+    this.emit();
   }
 
   getSnapshot(): SimulationSnapshot {
@@ -121,49 +131,55 @@ export class SimulationEngine {
   }
 
   private async tick_(): Promise<void> {
-    if (this.status !== 'running') return;
+    // Prevent concurrent tick execution when workers take longer than the interval
+    if (this.status !== 'running' || this.ticking) return;
+    this.ticking = true;
 
-    const wallStart = performance.now();
+    try {
+      const wallStart = performance.now();
 
-    let seqMs: number;
-    let parMs: number;
+      let seqMs: number;
+      let parMs: number;
 
-    if (this.config.mode === 'parallel') {
-      const r = await this.parallel.execute(this.vehicles, this.tick);
-      this.vehicles = r.vehicles;
-      parMs = r.durationMs;
-      seqMs = this.sequential.execute(this.vehicles, this.tick).durationMs * 2;
-    } else {
-      const r = this.sequential.execute(this.vehicles, this.tick);
-      this.vehicles = r.vehicles;
-      seqMs = r.durationMs;
-      parMs = seqMs / 2;
+      if (this.config.mode === 'parallel') {
+        const r = await this.parallel.execute(this.vehicles, this.tick);
+        this.vehicles = r.vehicles;
+        parMs = r.durationMs;
+        seqMs = this.sequential.execute(this.vehicles, this.tick).durationMs * 2;
+      } else {
+        const r = this.sequential.execute(this.vehicles, this.tick);
+        this.vehicles = r.vehicles;
+        seqMs = r.durationMs;
+        parMs = seqMs / 2;
+      }
+
+      this.tick += 1;
+      this.elapsedMs = this.startedAt ? Date.now() - this.startedAt : 0;
+
+      const wallMs = performance.now() - wallStart;
+
+      this.metrics = {
+        activeVehicles: this.vehicles.length,
+        congestionLevel: 0.3 + Math.sin(this.tick * 0.04) * 0.25,
+        avgEmergencyResponseMs: 0,
+        workerThreadCount: this.config.mode === 'parallel' ? 4 : 0,
+        tickRateHz: Math.round(1000 / Math.max(1, wallMs)),
+        cpuUsagePercent: 0,
+      };
+
+      this.benchmark = {
+        sequentialTickMs: parseFloat(seqMs.toFixed(3)),
+        parallelTickMs: parseFloat(parMs.toFixed(3)),
+        speedupFactor: parseFloat((seqMs / Math.max(0.001, parMs)).toFixed(2)),
+        throughputVehiclesPerSecond: Math.round(
+          (this.vehicles.length * 1000) / Math.max(1, wallMs),
+        ),
+      };
+
+      this.emit();
+    } finally {
+      this.ticking = false;
     }
-
-    this.tick += 1;
-    this.elapsedMs = this.startedAt ? Date.now() - this.startedAt : 0;
-
-    const wallMs = performance.now() - wallStart;
-
-    this.metrics = {
-      activeVehicles: this.vehicles.length,
-      congestionLevel: 0.3 + Math.sin(this.tick * 0.04) * 0.25,
-      avgEmergencyResponseMs: 0,
-      workerThreadCount: this.config.mode === 'parallel' ? 4 : 0,
-      tickRateHz: Math.round(1000 / Math.max(1, wallMs)),
-      cpuUsagePercent: 0,
-    };
-
-    this.benchmark = {
-      sequentialTickMs: parseFloat(seqMs.toFixed(3)),
-      parallelTickMs: parseFloat(parMs.toFixed(3)),
-      speedupFactor: parseFloat((seqMs / Math.max(0.001, parMs)).toFixed(2)),
-      throughputVehiclesPerSecond: Math.round(
-        (this.vehicles.length * 1000) / Math.max(1, wallMs),
-      ),
-    };
-
-    this.emit();
   }
 
   private emit(): void {
