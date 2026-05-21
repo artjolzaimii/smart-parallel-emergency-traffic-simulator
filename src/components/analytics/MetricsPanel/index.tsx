@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { Car, AlertTriangle, Clock, Cpu } from 'lucide-react';
 import { PerformanceChart } from '@/src/components/analytics/PerformanceChart';
 import { EmergencyMetrics } from '@/src/components/analytics/EmergencyMetrics';
+import { EmergencyStatusPanel } from '@/src/components/analytics/EmergencyStatusPanel';
 import { useMetricsStore } from '@/src/store/metricsStore';
 
 interface MetricCardProps {
@@ -93,6 +94,8 @@ export function MetricsPanel() {
       <hr className="border-gray-800" />
 
       <EmergencyMetrics />
+
+      <EmergencyStatusPanel />
 
       <hr className="border-gray-800" />
 

@@ -16,6 +16,8 @@ const STRATEGIES: RouteStrategy[] = [
 export class EmergencyRouter {
   private readonly nodes: Map<string, RoadNode>;
   private readonly edges: Map<string, RoadEdge>;
+  // Incident overrides sit on top of dynamic congestion
+  private incidentOverrides: Map<string, { congestionBoost: number; blocked: boolean }> = new Map();
 
   constructor(nodes: RoadNode[], edges: RoadEdge[]) {
     this.nodes = new Map(nodes.map((n) => [n.id, { ...n }]));
@@ -29,6 +31,26 @@ export class EmergencyRouter {
     }
   }
 
+  applyIncidentOverrides(overrides: { edgeId: string; congestionBoost: number; blocked: boolean }[]): void {
+    this.incidentOverrides.clear();
+    for (const o of overrides) {
+      this.incidentOverrides.set(o.edgeId, { congestionBoost: o.congestionBoost, blocked: o.blocked });
+    }
+  }
+
+  // Current edge state including incident overrides — used for route cost monitoring
+  getEdgesWithIncidents(): RoadEdge[] {
+    return Array.from(this.edges.values()).map((edge) => {
+      const inc = this.incidentOverrides.get(edge.id);
+      if (!inc) return edge;
+      return {
+        ...edge,
+        congestion: Math.min(1, edge.congestion + inc.congestionBoost),
+        blocked: edge.blocked || inc.blocked,
+      };
+    });
+  }
+
   async findRouteBest(
     startId: string,
     goalId: string,
@@ -36,7 +58,6 @@ export class EmergencyRouter {
   ): Promise<RoutingResult> {
     const now = Date.now();
 
-    // Sequential baseline is always measured for the benchmark comparison
     const seqStart = performance.now();
     const seqResult = this.runStrategy(startId, goalId, 'standard');
     const seqMs = performance.now() - seqStart;
@@ -45,7 +66,6 @@ export class EmergencyRouter {
       return toRoutingResult(seqResult, 'standard', seqMs, seqMs, null, null, 'sequential', now);
     }
 
-    // Parallel: evaluate all 4 strategies simultaneously in separate workers
     const parStart = performance.now();
     const parallelOutcomes = await this.runParallelStrategies(startId, goalId);
     const parMs = performance.now() - parStart;
@@ -65,7 +85,7 @@ export class EmergencyRouter {
   }
 
   private runStrategy(startId: string, goalId: string, strategy: RouteStrategy): PathResult {
-    const edges = applyStrategy(Array.from(this.edges.values()), strategy);
+    const edges = applyStrategy(this.getEdgesWithIncidents(), strategy);
     const adjacency = buildAdjacency(edges);
     return aStar(this.nodes, adjacency, startId, goalId);
   }
@@ -75,7 +95,8 @@ export class EmergencyRouter {
     goalId: string,
   ): Promise<{ strategy: RouteStrategy; result: PathResult }[]> {
     const nodesArr = Array.from(this.nodes.values());
-    const edgesArr = Array.from(this.edges.values()).map((e) => ({ ...e }));
+    // Incident-merged snapshot sent to workers so they see the same graph state
+    const edgesArr = this.getEdgesWithIncidents().map((e) => ({ ...e }));
     const workerPath = join(process.cwd(), 'src/workers/routingWorker.ts');
 
     return Promise.all(

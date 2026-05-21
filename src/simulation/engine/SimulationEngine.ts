@@ -8,10 +8,15 @@ import type {
 import type { PerformanceMetrics, BenchmarkComparison } from '../../types/metrics';
 import type { RoutingResult } from '../../types/emergency';
 import type { SimulationSnapshot } from '../../types/snapshot';
+import type { TrafficLightPhase } from '../../types/traffic';
 import { SequentialExecutor } from './SequentialExecutor';
 import { ParallelExecutor } from './ParallelExecutor';
 import { generateFleet } from '../utils/fleetGenerator';
 import { EmergencyRouter } from '../emergency/EmergencyRouter';
+import { IncidentManager } from '../incident/IncidentManager';
+import { haversineM } from '../utils/geo';
+import { edgeTravelCostS } from '../pathfinding/roadGraph';
+import type { RoadEdge } from '../pathfinding/roadGraph';
 import {
   TIRANA_NODES,
   TIRANA_BASE_EDGES,
@@ -40,7 +45,6 @@ const ZERO_METRICS: PerformanceMetrics = {
   cpuUsagePercent: 0,
 };
 
-// Edge IDs whose congestion evolves each tick (representative set)
 const DYNAMIC_EDGES = [
   { id: 'E01',  phase: 0.00 },
   { id: 'E02',  phase: 1.05 },
@@ -52,6 +56,9 @@ const DYNAMIC_EDGES = [
   { id: 'E02r', phase: 1.35 },
 ];
 
+const REROUTE_THRESHOLD = 1.25;  // reroute when cost rises by >25%
+const REROUTE_COOLDOWN = 8;      // minimum ticks between reroutes
+
 export class SimulationEngine {
   private status: SimulationStatus = 'idle';
   private config: SimulationConfig = { ...DEFAULT_CONFIG };
@@ -62,8 +69,18 @@ export class SimulationEngine {
   private ticking = false;
   private routing = false;
 
+  // Emergency state
+  private emergencyActive = false;
+  private autoRerouteEnabled = true;
+  private emergencyPriorityEnabled = true;
+  private rerouteCount = 0;
+  private lastRouteCostS = 0;
+  private lastRerouteAt = -99;
+  private routeQualityScore = 100;
+
   private vehicles: VehicleMarkerData[] = generateFleet(DEFAULT_CONFIG.vehicleCount);
-  private readonly trafficLights: TrafficLightMarkerData[] = [...MOCK_TRAFFIC_LIGHTS];
+  private readonly baseTrafficLights = MOCK_TRAFFIC_LIGHTS.map((t) => ({ ...t }));
+  private trafficLights: TrafficLightMarkerData[] = MOCK_TRAFFIC_LIGHTS.map((t) => ({ ...t }));
   private congestionSegments: CongestionSegmentData[] = MOCK_CONGESTION_SEGMENTS.map((s) => ({ ...s }));
   private emergencyRoute: EmergencyRouteData = { ...MOCK_EMERGENCY_ROUTE };
   private metrics: PerformanceMetrics = { ...ZERO_METRICS };
@@ -73,6 +90,7 @@ export class SimulationEngine {
   private readonly sequential = new SequentialExecutor();
   private readonly parallel = new ParallelExecutor();
   private readonly router = new EmergencyRouter(TIRANA_NODES, TIRANA_BASE_EDGES);
+  private readonly incidentManager = new IncidentManager();
   private onSnapshotCb?: (s: SimulationSnapshot) => void;
 
   setOnSnapshot(cb: (s: SimulationSnapshot) => void): void {
@@ -101,11 +119,19 @@ export class SimulationEngine {
     this.elapsedMs = 0;
     this.startedAt = null;
     this.vehicles = generateFleet(this.config.vehicleCount);
+    this.trafficLights = this.baseTrafficLights.map((t) => ({ ...t }));
     this.congestionSegments = MOCK_CONGESTION_SEGMENTS.map((s) => ({ ...s }));
     this.emergencyRoute = { ...MOCK_EMERGENCY_ROUTE };
     this.metrics = { ...ZERO_METRICS };
     this.benchmark = null;
     this.routingResult = null;
+    this.emergencyActive = false;
+    this.rerouteCount = 0;
+    this.lastRouteCostS = 0;
+    this.lastRerouteAt = -99;
+    this.routeQualityScore = 100;
+    this.incidentManager.reset();
+    this.router.applyIncidentOverrides([]);
     this.emit();
   }
 
@@ -125,8 +151,26 @@ export class SimulationEngine {
   }
 
   triggerEmergency(): void {
+    this.emergencyActive = true;
     if (this.routing) return;
     void this.runEmergencyRouting();
+  }
+
+  createManualIncident(): void {
+    this.incidentManager.createManual(this.tick);
+    this.router.applyIncidentOverrides(this.incidentManager.getEdgeOverrides());
+    this.emit();
+  }
+
+  toggleAutoReroute(): void {
+    this.autoRerouteEnabled = !this.autoRerouteEnabled;
+    this.emit();
+  }
+
+  toggleEmergencyPriority(): void {
+    this.emergencyPriorityEnabled = !this.emergencyPriorityEnabled;
+    this.applyTrafficLightPriority();
+    this.emit();
   }
 
   getSnapshot(): SimulationSnapshot {
@@ -142,6 +186,12 @@ export class SimulationEngine {
       metrics: { ...this.metrics },
       benchmark: this.benchmark,
       routingResult: this.routingResult,
+      incidents: this.incidentManager.getActive().map((i) => ({ ...i })),
+      rerouteCount: this.rerouteCount,
+      autoRerouteEnabled: this.autoRerouteEnabled,
+      emergencyPriorityEnabled: this.emergencyPriorityEnabled,
+      routeQualityScore: this.routeQualityScore,
+      emergencyActive: this.emergencyActive,
     };
   }
 
@@ -187,7 +237,20 @@ export class SimulationEngine {
       this.tick += 1;
       this.elapsedMs = this.startedAt ? Date.now() - this.startedAt : 0;
 
+      // Dynamic road congestion
       this.evolveCongestion();
+
+      // Incident lifecycle + apply to router
+      this.incidentManager.tick(this.tick);
+      this.router.applyIncidentOverrides(this.incidentManager.getEdgeOverrides());
+
+      // Auto-reroute if emergency route has degraded
+      if (this.emergencyActive && this.autoRerouteEnabled) {
+        this.checkAndReroute();
+      }
+
+      this.routeQualityScore = this.computeRouteQualityScore();
+      this.applyTrafficLightPriority();
 
       const wallMs = performance.now() - wallStart;
 
@@ -219,17 +282,76 @@ export class SimulationEngine {
 
   private evolveCongestion(): void {
     const t = this.tick;
-    const updates = DYNAMIC_EDGES.map(({ id, phase }) => ({
-      edgeId: id,
-      congestion: 0.35 + Math.sin(t * 0.035 + phase) * 0.30,
-    }));
-    this.router.updateCongestion(updates);
+    this.router.updateCongestion(
+      DYNAMIC_EDGES.map(({ id, phase }) => ({
+        edgeId: id,
+        congestion: 0.35 + Math.sin(t * 0.035 + phase) * 0.30,
+      })),
+    );
 
-    // Drift the visual congestion segments in sync
     this.congestionSegments = this.congestionSegments.map((seg, i) => ({
       ...seg,
       density: Math.max(0.05, Math.min(0.95, seg.density + Math.sin(t * 0.04 + i * 1.2) * 0.015)),
     }));
+  }
+
+  private checkAndReroute(): void {
+    if (this.routing) return;
+    if (this.tick - this.lastRerouteAt < REROUTE_COOLDOWN) return;
+
+    const currentCost = this.computeCurrentRouteCost();
+    const routeBlocked = !isFinite(currentCost);
+    const routeDegraded =
+      isFinite(currentCost) &&
+      this.lastRouteCostS > 0 &&
+      currentCost > this.lastRouteCostS * REROUTE_THRESHOLD;
+
+    if (routeBlocked || routeDegraded) {
+      this.rerouteCount++;
+      this.lastRerouteAt = this.tick;
+      void this.runEmergencyRouting();
+    }
+  }
+
+  private computeCurrentRouteCost(): number {
+    const nodeIds = this.routingResult?.nodeIds;
+    if (!nodeIds || nodeIds.length < 2) return 0;
+
+    const edges = this.router.getEdgesWithIncidents();
+    const lookup = new Map<string, RoadEdge>();
+    for (const edge of edges) {
+      lookup.set(`${edge.from}\x00${edge.to}`, edge);
+    }
+
+    let total = 0;
+    for (let i = 0; i < nodeIds.length - 1; i++) {
+      const edge = lookup.get(`${nodeIds[i]}\x00${nodeIds[i + 1]}`);
+      if (!edge) return Infinity;
+      const cost = edgeTravelCostS(edge);
+      if (!isFinite(cost)) return Infinity;
+      total += cost;
+    }
+    return total;
+  }
+
+  private computeRouteQualityScore(): number {
+    if (!this.emergencyActive || !this.routingResult?.found) return 100;
+    if (this.lastRouteCostS <= 0) return 100;
+    const current = this.computeCurrentRouteCost();
+    if (!isFinite(current)) return 0;
+    return Math.round(Math.min(100, Math.max(0, (this.lastRouteCostS / current) * 100)));
+  }
+
+  private applyTrafficLightPriority(): void {
+    const waypoints = this.emergencyRoute.waypoints;
+    const prioritize =
+      this.emergencyActive && this.emergencyPriorityEnabled && waypoints.length > 0;
+
+    this.trafficLights = this.baseTrafficLights.map((light) => {
+      const onRoute =
+        prioritize && waypoints.some((wp) => haversineM(wp, light.position) < 200);
+      return onRoute ? { ...light, phase: 'green' as TrafficLightPhase } : { ...light };
+    });
   }
 
   private async runEmergencyRouting(): Promise<void> {
@@ -241,6 +363,7 @@ export class SimulationEngine {
         this.config.mode,
       );
       this.routingResult = result;
+      this.lastRouteCostS = result.totalCostS;
       if (result.found) {
         this.emergencyRoute = { ...this.emergencyRoute, waypoints: result.waypoints };
       }

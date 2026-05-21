@@ -3,7 +3,9 @@ import { VehicleLayer } from '@/src/components/map/VehicleMarker';
 import { TrafficLightLayer } from '@/src/components/map/TrafficLightOverlay';
 import { EmergencyRouteLayer } from '@/src/components/map/RoutePolyline';
 import { CongestionLayer } from '@/src/components/map/CongestionHeatmap';
+import { IncidentLayer } from '@/src/components/map/IncidentLayer';
 import { useVehicleStore } from '@/src/store/vehicleStore';
+import { useEmergencyStore } from '@/src/store/emergencyStore';
 import {
   TIRANA_MAP_CONFIG,
   MOCK_VEHICLES,
@@ -20,7 +22,13 @@ const TILE_ATTRIBUTION =
 export default function MapClient() {
   const { center, zoom } = TIRANA_MAP_CONFIG;
   const storeVehicles = useVehicleStore((s) => s.vehicles);
+  const incidents = useEmergencyStore((s) => s.incidents);
+  const liveTrafficLights = useEmergencyStore((s) => s.trafficLightMarkers);
+  const liveEmergencyRoute = useEmergencyStore((s) => s.emergencyRoute);
+
   const vehicles = storeVehicles.length > 0 ? storeVehicles : MOCK_VEHICLES;
+  const trafficLights = liveTrafficLights.length > 0 ? liveTrafficLights : MOCK_TRAFFIC_LIGHTS;
+  const emergencyRoute = liveEmergencyRoute ?? MOCK_EMERGENCY_ROUTE;
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
@@ -39,8 +47,9 @@ export default function MapClient() {
         />
 
         <CongestionLayer segments={MOCK_CONGESTION_SEGMENTS} />
-        <EmergencyRouteLayer route={MOCK_EMERGENCY_ROUTE} />
-        <TrafficLightLayer lights={MOCK_TRAFFIC_LIGHTS} />
+        <EmergencyRouteLayer route={emergencyRoute} />
+        <IncidentLayer incidents={incidents} />
+        <TrafficLightLayer lights={trafficLights} />
         <VehicleLayer vehicles={vehicles} />
       </MapContainer>
     </div>

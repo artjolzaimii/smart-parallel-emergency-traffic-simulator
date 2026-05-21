@@ -7,6 +7,7 @@ import type {
 } from './map';
 import type { PerformanceMetrics, BenchmarkComparison } from './metrics';
 import type { RoutingResult } from './emergency';
+import type { Incident } from './incident';
 
 export interface SimulationSnapshot {
   tick: number;
@@ -20,4 +21,10 @@ export interface SimulationSnapshot {
   metrics: PerformanceMetrics;
   benchmark: BenchmarkComparison | null;
   routingResult: RoutingResult | null;
+  incidents: Incident[];
+  rerouteCount: number;
+  autoRerouteEnabled: boolean;
+  emergencyPriorityEnabled: boolean;
+  routeQualityScore: number;
+  emergencyActive: boolean;
 }

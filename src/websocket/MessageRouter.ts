@@ -40,6 +40,15 @@ export class MessageRouter {
       case 'TRIGGER_EMERGENCY':
         this.engine.triggerEmergency();
         break;
+      case 'CREATE_INCIDENT':
+        this.engine.createManualIncident();
+        break;
+      case 'TOGGLE_AUTO_REROUTE':
+        this.engine.toggleAutoReroute();
+        break;
+      case 'TOGGLE_EMERGENCY_PRIORITY':
+        this.engine.toggleEmergencyPriority();
+        break;
       default:
         console.warn('[WS] Unknown message type:', msg.type);
     }

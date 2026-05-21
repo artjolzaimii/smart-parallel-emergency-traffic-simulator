@@ -1,6 +1,7 @@
 import L from 'leaflet';
 import type { VehicleType } from '@/src/types/vehicle';
 import type { TrafficLightPhase } from '@/src/types/traffic';
+import type { IncidentType, IncidentSeverity } from '@/src/types/incident';
 
 interface ColorSpec {
   bg: string;
@@ -39,6 +40,32 @@ export function createVehicleIcon(type: VehicleType): L.DivIcon {
       ${isEmergency ? 'animation:marker-pulse 1.4s ease-in-out infinite;' : ''}
     "></div>`,
     iconSize: [s.size, s.size],
+    iconAnchor: [half, half],
+  });
+}
+
+const INCIDENT_SPECS: Record<IncidentType, { bg: string; border: string; text: string; glow: string }> = {
+  accident:          { bg: '#ef4444', border: '#b91c1c', text: '!', glow: 'rgba(239,68,68,0.7)' },
+  blocked:           { bg: '#f97316', border: '#c2410c', text: 'X', glow: 'rgba(249,115,22,0.7)' },
+  'congestion-spike': { bg: '#eab308', border: '#a16207', text: '~', glow: 'rgba(234,179,8,0.7)' },
+};
+
+const INCIDENT_SIZES: Record<IncidentSeverity, number> = { low: 12, medium: 15, high: 19 };
+
+export function createIncidentIcon(type: IncidentType, severity: IncidentSeverity): L.DivIcon {
+  const s = INCIDENT_SPECS[type];
+  const size = INCIDENT_SIZES[severity];
+  const half = size / 2;
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:${size}px;height:${size}px;
+      background:${s.bg};border:2px solid ${s.border};border-radius:3px;
+      display:flex;align-items:center;justify-content:center;
+      font-size:${size - 4}px;font-weight:900;color:white;
+      box-shadow:0 0 8px ${s.glow};
+    ">${s.text}</div>`,
+    iconSize: [size, size],
     iconAnchor: [half, half],
   });
 }

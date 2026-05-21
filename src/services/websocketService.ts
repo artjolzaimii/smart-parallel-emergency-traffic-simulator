@@ -3,6 +3,7 @@ import { useSimulationStore } from '@/src/store/simulationStore';
 import { useVehicleStore } from '@/src/store/vehicleStore';
 import { useMetricsStore } from '@/src/store/metricsStore';
 import { useWsStore } from '@/src/store/wsStore';
+import { useEmergencyStore } from '@/src/store/emergencyStore';
 
 type SnapshotHandler = (snapshot: SimulationSnapshot) => void;
 
@@ -83,6 +84,15 @@ class WebSocketService {
     useMetricsStore.getState().updateMetrics(snapshot.metrics);
     useMetricsStore.getState().setBenchmark(snapshot.benchmark);
     useMetricsStore.getState().setRouting(snapshot.routingResult);
+    const em = useEmergencyStore.getState();
+    em.setIncidents(snapshot.incidents);
+    em.setRerouteCount(snapshot.rerouteCount);
+    em.setAutoReroute(snapshot.autoRerouteEnabled);
+    em.setEmergencyPriority(snapshot.emergencyPriorityEnabled);
+    em.setRouteQualityScore(snapshot.routeQualityScore);
+    em.setEmergencyActive(snapshot.emergencyActive);
+    em.setTrafficLightMarkers(snapshot.trafficLights);
+    em.setEmergencyRoute(snapshot.emergencyRoute);
   }
 
   private scheduleReconnect(): void {

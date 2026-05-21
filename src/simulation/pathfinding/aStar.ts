@@ -1,5 +1,6 @@
 import type { RoadNode, RoadEdge } from './roadGraph';
 import { edgeTravelCostS } from './roadGraph';
+import { haversineM } from '../utils/geo';
 import type { GeoPosition } from '../../types/simulation';
 
 export interface PathResult {
@@ -58,18 +59,6 @@ class MinHeap {
   }
 }
 
-function haversineM(a: GeoPosition, b: GeoPosition): number {
-  const R = 6_371_000;
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const x =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((a.lat * Math.PI) / 180) *
-      Math.cos((b.lat * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-}
-
 export function aStar(
   nodes: Map<string, RoadNode>,
   adjacency: Map<string, RoadEdge[]>,
@@ -81,7 +70,7 @@ export function aStar(
     return { found: false, nodeIds: [], waypoints: [], totalCostS: 0, totalDistanceM: 0, roadsEvaluated: 0 };
   }
 
-  // Admissible heuristic: straight-line distance at max network speed (60 kph)
+  // Admissible heuristic: straight-line time at max network speed (60 kph)
   const heuristic = (id: string): number => {
     const node = nodes.get(id);
     if (!node) return 0;
@@ -139,7 +128,6 @@ function buildPath(
   nodeIds.unshift(cur);
 
   const waypoints = nodeIds.map((id) => nodes.get(id)!.position);
-
   let totalDistanceM = 0;
   for (let i = 1; i < nodeIds.length; i++) {
     totalDistanceM += haversineM(

@@ -8,3 +8,4 @@ export * from './worker';
 export * from './websocket';
 export * from './map';
 export * from './snapshot';
+export * from './incident';
