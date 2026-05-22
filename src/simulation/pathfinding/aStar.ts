@@ -70,7 +70,6 @@ export function aStar(
     return { found: false, nodeIds: [], waypoints: [], totalCostS: 0, totalDistanceM: 0, roadsEvaluated: 0 };
   }
 
-  // Admissible heuristic: straight-line time at max network speed (60 kph)
   const heuristic = (id: string): number => {
     const node = nodes.get(id);
     if (!node) return 0;
@@ -79,6 +78,7 @@ export function aStar(
 
   const gScore = new Map<string, number>([[startId, 0]]);
   const cameFrom = new Map<string, string>();
+  const cameFromEdge = new Map<string, RoadEdge>(); // targetNode → edge used to reach it
   const closed = new Set<string>();
   const heap = new MinHeap();
   let roadsEvaluated = 0;
@@ -89,7 +89,7 @@ export function aStar(
     const current = heap.pop()!;
 
     if (current === goalId) {
-      return buildPath(goalId, cameFrom, nodes, gScore.get(goalId) ?? 0, roadsEvaluated);
+      return buildPath(goalId, cameFrom, cameFromEdge, nodes, gScore.get(goalId) ?? 0, roadsEvaluated);
     }
 
     if (closed.has(current)) continue;
@@ -104,6 +104,7 @@ export function aStar(
       if (tentative < (gScore.get(edge.to) ?? Infinity)) {
         gScore.set(edge.to, tentative);
         cameFrom.set(edge.to, current);
+        cameFromEdge.set(edge.to, edge);
         heap.push(tentative + heuristic(edge.to), edge.to);
       }
     }
@@ -115,6 +116,7 @@ export function aStar(
 function buildPath(
   goalId: string,
   cameFrom: Map<string, string>,
+  cameFromEdge: Map<string, RoadEdge>,
   nodes: Map<string, RoadNode>,
   totalCostS: number,
   roadsEvaluated: number,
@@ -127,13 +129,37 @@ function buildPath(
   }
   nodeIds.unshift(cur);
 
-  const waypoints = nodeIds.map((id) => nodes.get(id)!.position);
+  // Build waypoints from edge geometry (real road coordinates)
+  const waypoints: GeoPosition[] = [];
+  for (let i = 1; i < nodeIds.length; i++) {
+    const edge = cameFromEdge.get(nodeIds[i]);
+    if (edge?.coordinates && edge.coordinates.length >= 2) {
+      // First edge: include all coords. Subsequent: skip first to avoid duplicating junction.
+      const coords = i === 1 ? edge.coordinates : edge.coordinates.slice(1);
+      waypoints.push(...coords);
+    } else {
+      // No geometry: straight line between node positions
+      if (i === 1) waypoints.push(nodes.get(nodeIds[0])!.position);
+      waypoints.push(nodes.get(nodeIds[i])!.position);
+    }
+  }
+  if (waypoints.length === 0 && nodeIds.length > 0) {
+    const n = nodes.get(nodeIds[0]);
+    if (n) waypoints.push(n.position);
+  }
+
+  // Total distance: sum edge distances (more accurate than haversine on curved roads)
   let totalDistanceM = 0;
   for (let i = 1; i < nodeIds.length; i++) {
-    totalDistanceM += haversineM(
-      nodes.get(nodeIds[i - 1])!.position,
-      nodes.get(nodeIds[i])!.position,
-    );
+    const edge = cameFromEdge.get(nodeIds[i]);
+    if (edge) {
+      totalDistanceM += edge.distanceM;
+    } else {
+      totalDistanceM += haversineM(
+        nodes.get(nodeIds[i - 1])!.position,
+        nodes.get(nodeIds[i])!.position,
+      );
+    }
   }
 
   return { found: true, nodeIds, waypoints, totalCostS, totalDistanceM, roadsEvaluated };

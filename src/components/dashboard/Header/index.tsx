@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { clsx } from 'clsx';
-import { Cpu, Radio } from 'lucide-react';
+import { Cpu, Radio, HelpCircle } from 'lucide-react';
 import { Badge } from '@/src/components/ui/Badge';
+import { HowItWorksModal } from '@/src/components/ui/HowItWorksModal';
 import { useSimulationStore } from '@/src/store/simulationStore';
 import { useWsStore } from '@/src/store/wsStore';
 
@@ -17,37 +19,52 @@ export function Header() {
   const { config } = useSimulationStore();
   const wsStatus = useWsStore((s) => s.status);
   const ws = WS_STATUS_CONFIG[wsStatus];
+  const [showModal, setShowModal] = useState(false);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-800 bg-gray-900 px-6">
-      {/* Branding */}
-      <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-cyan-800 bg-cyan-950">
-          <Cpu className="h-4 w-4 text-cyan-400" />
+    <>
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-800 bg-gray-900 px-6">
+        {/* Branding */}
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-cyan-800 bg-cyan-950">
+            <Cpu className="h-4 w-4 text-cyan-400" />
+          </div>
+          <div>
+            <h1 className="text-sm font-bold tracking-widest text-gray-100">SPERTS</h1>
+            <p className="text-xs text-gray-500">
+              Smart Parallel Emergency &amp; Traffic Simulator
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-sm font-bold tracking-widest text-gray-100">SPERTS</h1>
-          <p className="text-xs text-gray-500">
-            Smart Parallel Emergency &amp; Traffic Simulator
-          </p>
+
+        {/* WS status */}
+        <div className="flex items-center gap-3 text-xs">
+          <Radio className="h-3.5 w-3.5 text-gray-600" />
+          <span className={clsx('flex items-center gap-1.5', ws.text)}>
+            <span className={clsx('h-2 w-2 rounded-full', ws.dot)} />
+            {ws.label} — ws://localhost:3001
+          </span>
         </div>
-      </div>
 
-      {/* WS connection status */}
-      <div className="flex items-center gap-2 text-xs">
-        <Radio className="h-3.5 w-3.5 text-gray-600" />
-        <span className={clsx('flex items-center gap-1.5', ws.text)}>
-          <span className={clsx('h-2 w-2 rounded-full', ws.dot)} />
-          {ws.label} — ws://localhost:3001
-        </span>
-      </div>
+        {/* Right actions */}
+        <div className="flex items-center gap-3">
+          <Badge
+            variant={config.mode === 'parallel' ? 'info' : 'neutral'}
+            label={config.mode === 'parallel' ? 'Parallel Mode' : 'Sequential Mode'}
+            dot
+          />
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-1 rounded border border-gray-700 bg-transparent px-2 py-1 text-xs text-gray-500 hover:border-gray-500 hover:text-gray-300"
+            title="How it works"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+            How it works
+          </button>
+        </div>
+      </header>
 
-      {/* Mode badge */}
-      <Badge
-        variant={config.mode === 'parallel' ? 'info' : 'neutral'}
-        label={config.mode === 'parallel' ? 'Parallel Mode' : 'Sequential Mode'}
-        dot
-      />
-    </header>
+      {showModal && <HowItWorksModal onClose={() => setShowModal(false)} />}
+    </>
   );
 }

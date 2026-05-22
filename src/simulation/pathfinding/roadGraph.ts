@@ -3,7 +3,7 @@ import type { GeoPosition } from '../../types/simulation';
 export interface RoadNode {
   id: string;
   position: GeoPosition;
-  label: string;
+  label?: string;
 }
 
 export interface RoadEdge {
@@ -12,9 +12,13 @@ export interface RoadEdge {
   to: string;
   distanceM: number;
   baseSpeedKph: number;
-  congestion: number;        // 0–1, mutated each simulation tick
+  congestion: number;
   trafficLightDelayS: number;
   blocked: boolean;
+  // Populated from OSM cache; absent in mock graph (fallback uses node positions)
+  coordinates?: GeoPosition[];
+  name?: string;
+  roadType?: string;
 }
 
 export function edgeTravelCostS(edge: RoadEdge): number {

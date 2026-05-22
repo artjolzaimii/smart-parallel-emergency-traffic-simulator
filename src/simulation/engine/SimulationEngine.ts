@@ -9,25 +9,19 @@ import type { PerformanceMetrics, BenchmarkComparison } from '../../types/metric
 import type { RoutingResult } from '../../types/emergency';
 import type { SimulationSnapshot } from '../../types/snapshot';
 import type { TrafficLightPhase } from '../../types/traffic';
+import type { RoadEdge } from '../pathfinding/roadGraph';
+import type { VehicleGraphState } from '../vehicles/VehicleGraphState';
 import { SequentialExecutor } from './SequentialExecutor';
+import type { GraphContext } from './SequentialExecutor';
 import { ParallelExecutor } from './ParallelExecutor';
 import { generateFleet } from '../utils/fleetGenerator';
+import { loadRoadGraph } from '../pathfinding/loadRoadGraph';
+import type { LoadedGraph } from '../pathfinding/loadRoadGraph';
 import { EmergencyRouter } from '../emergency/EmergencyRouter';
 import { IncidentManager } from '../incident/IncidentManager';
 import { haversineM } from '../utils/geo';
 import { edgeTravelCostS } from '../pathfinding/roadGraph';
-import type { RoadEdge } from '../pathfinding/roadGraph';
-import {
-  TIRANA_NODES,
-  TIRANA_BASE_EDGES,
-  AMBULANCE_START_NODE,
-  HOSPITAL_NODE,
-} from '../pathfinding/tiranaRoadGraph';
-import {
-  MOCK_TRAFFIC_LIGHTS,
-  MOCK_CONGESTION_SEGMENTS,
-  MOCK_EMERGENCY_ROUTE,
-} from '../../../data/scenarios/tiranaMockData';
+import { MOCK_TRAFFIC_LIGHTS, MOCK_CONGESTION_SEGMENTS } from '../../../data/scenarios/tiranaMockData';
 
 const DEFAULT_CONFIG: SimulationConfig = {
   mode: 'parallel',
@@ -45,21 +39,14 @@ const ZERO_METRICS: PerformanceMetrics = {
   cpuUsagePercent: 0,
 };
 
-const DYNAMIC_EDGES = [
-  { id: 'E01',  phase: 0.00 },
-  { id: 'E02',  phase: 1.05 },
-  { id: 'E03',  phase: 2.10 },
-  { id: 'E08',  phase: 0.52 },
-  { id: 'E11',  phase: 1.73 },
-  { id: 'E12',  phase: 0.87 },
-  { id: 'E01r', phase: 0.30 },
-  { id: 'E02r', phase: 1.35 },
-];
+// Phase offsets for dynamic congestion on the first 8 loaded edges
+const DYNAMIC_PHASES = [0.00, 1.05, 2.10, 0.52, 1.73, 0.87, 0.30, 1.35];
 
-const REROUTE_THRESHOLD = 1.25;  // reroute when cost rises by >25%
-const REROUTE_COOLDOWN = 8;      // minimum ticks between reroutes
+const REROUTE_THRESHOLD = 1.25;
+const REROUTE_COOLDOWN = 8;
 
 export class SimulationEngine {
+  // Independent fields
   private status: SimulationStatus = 'idle';
   private config: SimulationConfig = { ...DEFAULT_CONFIG };
   private tick = 0;
@@ -68,8 +55,6 @@ export class SimulationEngine {
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   private routing = false;
-
-  // Emergency state
   private emergencyActive = false;
   private autoRerouteEnabled = true;
   private emergencyPriorityEnabled = true;
@@ -77,21 +62,53 @@ export class SimulationEngine {
   private lastRouteCostS = 0;
   private lastRerouteAt = -99;
   private routeQualityScore = 100;
-
-  private vehicles: VehicleMarkerData[] = generateFleet(DEFAULT_CONFIG.vehicleCount);
-  private readonly baseTrafficLights = MOCK_TRAFFIC_LIGHTS.map((t) => ({ ...t }));
-  private trafficLights: TrafficLightMarkerData[] = MOCK_TRAFFIC_LIGHTS.map((t) => ({ ...t }));
   private congestionSegments: CongestionSegmentData[] = MOCK_CONGESTION_SEGMENTS.map((s) => ({ ...s }));
-  private emergencyRoute: EmergencyRouteData = { ...MOCK_EMERGENCY_ROUTE };
   private metrics: PerformanceMetrics = { ...ZERO_METRICS };
   private benchmark: BenchmarkComparison | null = null;
   private routingResult: RoutingResult | null = null;
-
+  private onSnapshotCb?: (s: SimulationSnapshot) => void;
   private readonly sequential = new SequentialExecutor();
   private readonly parallel = new ParallelExecutor();
-  private readonly router = new EmergencyRouter(TIRANA_NODES, TIRANA_BASE_EDGES);
-  private readonly incidentManager = new IncidentManager();
-  private onSnapshotCb?: (s: SimulationSnapshot) => void;
+
+  // Graph-dependent fields — assigned in constructor
+  private readonly graph: LoadedGraph;
+  private readonly router: EmergencyRouter;
+  private readonly incidentManager: IncidentManager;
+  private readonly dynamicEdges: Array<{ id: string; phase: number }>;
+  private readonly baseTrafficLights: TrafficLightMarkerData[];
+  private trafficLights: TrafficLightMarkerData[];
+  private vehicles: VehicleMarkerData[];
+  private vehicleGraphStates: VehicleGraphState[];
+  private emergencyRoute: EmergencyRouteData;
+
+  constructor() {
+    this.graph = loadRoadGraph();
+
+    this.router = new EmergencyRouter(this.graph.nodes, this.graph.edges);
+    this.incidentManager = new IncidentManager(
+      this.graph.nodes,
+      this.graph.edges,
+      this.graph.startNodeId,
+      this.graph.goalNodeId,
+    );
+    this.dynamicEdges = this.graph.edges
+      .slice(0, Math.min(8, this.graph.edges.length))
+      .map((e, i) => ({ id: e.id, phase: DYNAMIC_PHASES[i] }));
+
+    this.baseTrafficLights = MOCK_TRAFFIC_LIGHTS.map((t) => ({ ...t }));
+    this.trafficLights = MOCK_TRAFFIC_LIGHTS.map((t) => ({ ...t }));
+
+    const fleet = generateFleet(DEFAULT_CONFIG.vehicleCount, this.graph);
+    this.vehicles = fleet.vehicles;
+    this.vehicleGraphStates = fleet.graphStates;
+
+    const startNode = this.graph.nodesMap.get(this.graph.startNodeId);
+    this.emergencyRoute = {
+      id: 'route-001',
+      vehicleId: 'ev-001',
+      waypoints: startNode ? [startNode.position] : [],
+    };
+  }
 
   setOnSnapshot(cb: (s: SimulationSnapshot) => void): void {
     this.onSnapshotCb = cb;
@@ -118,10 +135,8 @@ export class SimulationEngine {
     this.tick = 0;
     this.elapsedMs = 0;
     this.startedAt = null;
-    this.vehicles = generateFleet(this.config.vehicleCount);
     this.trafficLights = this.baseTrafficLights.map((t) => ({ ...t }));
     this.congestionSegments = MOCK_CONGESTION_SEGMENTS.map((s) => ({ ...s }));
-    this.emergencyRoute = { ...MOCK_EMERGENCY_ROUTE };
     this.metrics = { ...ZERO_METRICS };
     this.benchmark = null;
     this.routingResult = null;
@@ -132,6 +147,18 @@ export class SimulationEngine {
     this.routeQualityScore = 100;
     this.incidentManager.reset();
     this.router.applyIncidentOverrides([]);
+
+    const fleet = generateFleet(this.config.vehicleCount, this.graph);
+    this.vehicles = fleet.vehicles;
+    this.vehicleGraphStates = fleet.graphStates;
+
+    const startNode = this.graph.nodesMap.get(this.graph.startNodeId);
+    this.emergencyRoute = {
+      id: 'route-001',
+      vehicleId: 'ev-001',
+      waypoints: startNode ? [startNode.position] : [],
+    };
+
     this.emit();
   }
 
@@ -143,7 +170,9 @@ export class SimulationEngine {
     this.config = { ...this.config, ...patch };
 
     if (patch.vehicleCount !== undefined && patch.vehicleCount !== prevCount) {
-      this.vehicles = generateFleet(this.config.vehicleCount);
+      const fleet = generateFleet(this.config.vehicleCount, this.graph);
+      this.vehicles = fleet.vehicles;
+      this.vehicleGraphStates = fleet.graphStates;
     }
 
     if (wasRunning) this.scheduleLoop();
@@ -212,24 +241,42 @@ export class SimulationEngine {
     }
   }
 
+  private buildGraphContext(): GraphContext {
+    const liveEdges = this.router.getEdgesWithIncidents();
+    return {
+      edgesMap: new Map(liveEdges.map((e) => [e.id, e])),
+      adjacency: this.graph.adjacency,
+    };
+  }
+
   private async tick_(): Promise<void> {
     if (this.status !== 'running' || this.ticking) return;
     this.ticking = true;
 
     try {
       const wallStart = performance.now();
+      const ctx = this.buildGraphContext();
+      const liveEdges = Array.from(ctx.edgesMap.values());
 
       let seqMs: number;
       let parMs: number;
 
       if (this.config.mode === 'parallel') {
-        const r = await this.parallel.execute(this.vehicles, this.tick);
+        const r = await this.parallel.execute(
+          this.vehicles,
+          this.vehicleGraphStates,
+          liveEdges,
+          this.graph.adjacency,
+        );
         this.vehicles = r.vehicles;
+        this.vehicleGraphStates = r.graphStates;
         parMs = r.durationMs;
-        seqMs = this.sequential.execute(this.vehicles, this.tick).durationMs * 2;
+        // Simulate sequential cost for benchmark comparison
+        seqMs = this.sequential.execute(this.vehicles, this.vehicleGraphStates, ctx).durationMs * 2;
       } else {
-        const r = this.sequential.execute(this.vehicles, this.tick);
+        const r = this.sequential.execute(this.vehicles, this.vehicleGraphStates, ctx);
         this.vehicles = r.vehicles;
+        this.vehicleGraphStates = r.graphStates;
         seqMs = r.durationMs;
         parMs = seqMs / 2;
       }
@@ -237,14 +284,11 @@ export class SimulationEngine {
       this.tick += 1;
       this.elapsedMs = this.startedAt ? Date.now() - this.startedAt : 0;
 
-      // Dynamic road congestion
       this.evolveCongestion();
 
-      // Incident lifecycle + apply to router
       this.incidentManager.tick(this.tick);
       this.router.applyIncidentOverrides(this.incidentManager.getEdgeOverrides());
 
-      // Auto-reroute if emergency route has degraded
       if (this.emergencyActive && this.autoRerouteEnabled) {
         this.checkAndReroute();
       }
@@ -283,7 +327,7 @@ export class SimulationEngine {
   private evolveCongestion(): void {
     const t = this.tick;
     this.router.updateCongestion(
-      DYNAMIC_EDGES.map(({ id, phase }) => ({
+      this.dynamicEdges.map(({ id, phase }) => ({
         edgeId: id,
         congestion: 0.35 + Math.sin(t * 0.035 + phase) * 0.30,
       })),
@@ -358,8 +402,8 @@ export class SimulationEngine {
     this.routing = true;
     try {
       const result = await this.router.findRouteBest(
-        AMBULANCE_START_NODE,
-        HOSPITAL_NODE,
+        this.graph.startNodeId,
+        this.graph.goalNodeId,
         this.config.mode,
       );
       this.routingResult = result;

@@ -1,28 +1,38 @@
 import type { VehicleMarkerData } from '../../types/map';
+import type { RoadEdge } from '../pathfinding/roadGraph';
+import type { VehicleGraphState } from '../vehicles/VehicleGraphState';
+import { moveVehicleOnGraph } from '../vehicles/VehicleMovement';
+
+export interface GraphContext {
+  edgesMap: Map<string, RoadEdge>;
+  adjacency: Record<string, string[]>;
+}
 
 export interface ExecutorResult {
   vehicles: VehicleMarkerData[];
+  graphStates: VehicleGraphState[];
   durationMs: number;
 }
 
 export class SequentialExecutor {
-  execute(vehicles: VehicleMarkerData[], tick: number): ExecutorResult {
+  execute(
+    vehicles: VehicleMarkerData[],
+    graphStates: VehicleGraphState[],
+    ctx: GraphContext,
+  ): ExecutorResult {
     const start = performance.now();
-    const updated = vehicles.map((v) => moveVehicle(v, tick));
-    return { vehicles: updated, durationMs: performance.now() - start };
-  }
-}
+    const stateMap = new Map(graphStates.map((s) => [s.id, s]));
 
-export function moveVehicle(vehicle: VehicleMarkerData, tick: number): VehicleMarkerData {
-  if (vehicle.isEmergency) return vehicle;
-  const jitter = 0.000025;
-  const seed = vehicle.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-  const angle = (tick * 0.08 + seed * 0.37) % (Math.PI * 2);
-  return {
-    ...vehicle,
-    position: {
-      lat: vehicle.position.lat + Math.sin(angle) * jitter,
-      lng: vehicle.position.lng + Math.cos(angle) * jitter,
-    },
-  };
+    const results = vehicles.map((v) => {
+      const state = stateMap.get(v.id);
+      if (!state) return { vehicle: v, state: { id: v.id, edgeId: '', progress: 0 } };
+      return moveVehicleOnGraph(v, state, ctx.edgesMap, ctx.adjacency);
+    });
+
+    return {
+      vehicles: results.map((r) => r.vehicle),
+      graphStates: results.map((r) => r.state),
+      durationMs: performance.now() - start,
+    };
+  }
 }

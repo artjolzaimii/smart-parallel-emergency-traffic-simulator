@@ -1,12 +1,19 @@
 import { Worker } from 'worker_threads';
 import { join } from 'path';
 import type { VehicleMarkerData } from '../../types/map';
+import type { RoadEdge } from '../pathfinding/roadGraph';
+import type { VehicleGraphState } from '../vehicles/VehicleGraphState';
 import type { ExecutorResult } from './SequentialExecutor';
 
 const WORKER_COUNT = 4;
 
+interface WorkerResult {
+  vehicles: VehicleMarkerData[];
+  graphStates: VehicleGraphState[];
+}
+
 export class ParallelExecutor {
-  private workers: Worker[];
+  private readonly workers: Worker[];
 
   constructor() {
     const workerPath = join(process.cwd(), 'src/workers/vehicleWorker.ts');
@@ -15,34 +22,50 @@ export class ParallelExecutor {
     );
   }
 
-  async execute(vehicles: VehicleMarkerData[], tick: number): Promise<ExecutorResult> {
+  async execute(
+    vehicles: VehicleMarkerData[],
+    graphStates: VehicleGraphState[],
+    edges: RoadEdge[],
+    adjacency: Record<string, string[]>,
+  ): Promise<ExecutorResult> {
     const start = performance.now();
 
     const chunkSize = Math.ceil(vehicles.length / this.workers.length);
-    const chunks: VehicleMarkerData[][] = [];
+    const chunks: Array<{ vehicles: VehicleMarkerData[]; graphStates: VehicleGraphState[] }> = [];
     for (let i = 0; i < vehicles.length; i += chunkSize) {
-      chunks.push(vehicles.slice(i, Math.min(i + chunkSize, vehicles.length)));
+      const end = Math.min(i + chunkSize, vehicles.length);
+      chunks.push({ vehicles: vehicles.slice(i, end), graphStates: graphStates.slice(i, end) });
     }
 
     const results = await Promise.all(
       chunks.map((chunk, i) =>
-        this.dispatch(this.workers[i % this.workers.length], { vehicles: chunk, tick }),
+        this.dispatch(this.workers[i % this.workers.length], {
+          vehicles: chunk.vehicles,
+          graphStates: chunk.graphStates,
+          edges,
+          adjacency,
+        }),
       ),
     );
 
     return {
       vehicles: results.flatMap((r) => r.vehicles),
+      graphStates: results.flatMap((r) => r.graphStates),
       durationMs: performance.now() - start,
     };
   }
 
   private dispatch(
     worker: Worker,
-    task: { vehicles: VehicleMarkerData[]; tick: number },
-  ): Promise<{ vehicles: VehicleMarkerData[] }> {
+    task: {
+      vehicles: VehicleMarkerData[];
+      graphStates: VehicleGraphState[];
+      edges: RoadEdge[];
+      adjacency: Record<string, string[]>;
+    },
+  ): Promise<WorkerResult> {
     return new Promise((resolve, reject) => {
-      // Cross-remove handlers so neither accumulates after the other fires
-      const onMessage = (result: { vehicles: VehicleMarkerData[] }) => {
+      const onMessage = (result: WorkerResult) => {
         worker.off('error', onError);
         resolve(result);
       };
