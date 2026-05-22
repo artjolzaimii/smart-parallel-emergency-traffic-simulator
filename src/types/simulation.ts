@@ -25,3 +25,13 @@ export interface SimulationState {
   elapsedMs: number;
   startedAt: number | null;
 }
+
+export interface SyncMetrics {
+  semaphoreAcquisitions: number;
+  semaphoreWaits: number;
+  blockedThisTick: number;
+  controlledIntersections: number;
+  emergencyProduced: number;
+  emergencyConsumed: number;
+  emergencyPending: number;
+}

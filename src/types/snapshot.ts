@@ -1,4 +1,4 @@
-import type { SimulationStatus, SimulationConfig } from './simulation';
+import type { SimulationStatus, SimulationConfig, SyncMetrics } from './simulation';
 import type {
   VehicleMarkerData,
   TrafficLightMarkerData,
@@ -34,4 +34,6 @@ export interface SimulationSnapshot {
   fullBenchmarkResult: FullBenchmarkResult | null;
   // Live ambulance dispatch tracking
   dispatchState: DispatchState | null;
+  // Synchronization subsystem metrics
+  syncMetrics: SyncMetrics;
 }

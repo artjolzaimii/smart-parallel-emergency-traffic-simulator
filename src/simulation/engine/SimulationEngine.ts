@@ -9,6 +9,7 @@ import type {
 } from '../../types/map';
 import type { PerformanceMetrics, BenchmarkComparison } from '../../types/metrics';
 import type { RoutingResult, DispatchState } from '../../types/emergency';
+import type { SyncMetrics } from '../../types/simulation';
 import type { SimulationSnapshot } from '../../types/snapshot';
 import type { TrafficLightPhase } from '../../types/traffic';
 import type { RoadEdge } from '../pathfinding/roadGraph';
@@ -24,6 +25,8 @@ import { IncidentManager } from '../incident/IncidentManager';
 import { haversineM } from '../utils/geo';
 import { edgeTravelCostS } from '../pathfinding/roadGraph';
 import { interpolateEdge } from '../vehicles/VehicleMovement';
+import { IntersectionSemaphoreManager } from '../synchronization/IntersectionSemaphoreManager';
+import { EmergencyRequestQueue } from '../synchronization/EmergencyRequestQueue';
 import { MOCK_TRAFFIC_LIGHTS, MOCK_CONGESTION_SEGMENTS } from '../../../data/scenarios/tiranaMockData';
 
 const DEFAULT_CONFIG: SimulationConfig = {
@@ -81,6 +84,8 @@ export class SimulationEngine {
   private fullBenchmarkResult: FullBenchmarkResult | null = null;
   private benchmarkRunner!: BenchmarkRunner;
   private dispatchState: DispatchState | null = null;
+  private readonly semaphoreManager: IntersectionSemaphoreManager;
+  private readonly emergencyQueue: EmergencyRequestQueue;
 
   // Graph-dependent fields — assigned in constructor
   private readonly graph: LoadedGraph;
@@ -122,6 +127,10 @@ export class SimulationEngine {
     };
 
     this.benchmarkRunner = new BenchmarkRunner(this.graph);
+    this.semaphoreManager = new IntersectionSemaphoreManager(
+      this.graph.nodes.map((n) => n.id),
+    );
+    this.emergencyQueue = new EmergencyRequestQueue();
   }
 
   setOnSnapshot(cb: (s: SimulationSnapshot) => void): void {
@@ -161,6 +170,8 @@ export class SimulationEngine {
     this.lastRerouteAt = -99;
     this.routeQualityScore = 100;
     this.incidentManager.reset();
+    this.semaphoreManager.reset();
+    this.emergencyQueue.reset();
     this.router.applyIncidentOverrides([]);
 
     const fleet = generateFleet(this.config.vehicleCount, this.graph);
@@ -196,6 +207,18 @@ export class SimulationEngine {
 
   triggerEmergency(): void {
     if (this.emergencyActive) return;
+    // Producer side of the producer-consumer queue.
+    // The tick loop is the consumer; it drains one request per tick.
+    // When paused/idle we consume immediately so the user sees feedback.
+    this.emergencyQueue.enqueue(this.tick);
+    if (this.status !== 'running') this.consumeEmergencyRequest();
+    this.emit();
+  }
+
+  private consumeEmergencyRequest(): void {
+    if (this.emergencyActive) return;
+    const req = this.emergencyQueue.consume();
+    if (!req) return;
     this.emergencyActive = true;
     this.dispatchState = {
       status: 'routing',
@@ -213,7 +236,6 @@ export class SimulationEngine {
       workersUsed: 0,
       selectedStrategy: 'standard',
     };
-    this.emit();
     if (!this.routing) void this.runEmergencyRouting();
   }
 
@@ -284,6 +306,7 @@ export class SimulationEngine {
       benchmarkProgress: this.benchmarkProgress,
       fullBenchmarkResult: this.fullBenchmarkResult,
       dispatchState: this.dispatchState ? { ...this.dispatchState } : null,
+      syncMetrics: this.buildSyncMetrics(),
     };
   }
 
@@ -321,6 +344,10 @@ export class SimulationEngine {
       const ctx = this.buildGraphContext();
       const liveEdges = Array.from(ctx.edgesMap.values());
 
+      // Capture pre-move state so semaphore manager can revert blocked vehicles
+      const prevVehicles     = this.vehicles;
+      const prevGraphStates  = this.vehicleGraphStates;
+
       let seqMs: number;
       let parMs: number;
 
@@ -331,20 +358,30 @@ export class SimulationEngine {
           liveEdges,
           this.graph.adjacency,
         );
-        this.vehicles = r.vehicles;
-        this.vehicleGraphStates = r.graphStates;
         parMs = r.durationMs;
         // Simulate sequential cost for benchmark comparison
-        seqMs = this.sequential.execute(this.vehicles, this.vehicleGraphStates, ctx).durationMs * 2;
+        seqMs = this.sequential.execute(r.vehicles, r.graphStates, ctx).durationMs * 2;
+        // Apply intersection semaphore constraints
+        const corrected = this.semaphoreManager.applyConstraints(
+          prevGraphStates, r.graphStates, prevVehicles, r.vehicles, ctx.edgesMap,
+        );
+        this.vehicles = corrected.vehicles;
+        this.vehicleGraphStates = corrected.graphStates;
       } else {
         const r = this.sequential.execute(this.vehicles, this.vehicleGraphStates, ctx);
-        this.vehicles = r.vehicles;
-        this.vehicleGraphStates = r.graphStates;
         seqMs = r.durationMs;
         parMs = seqMs / 2;
+        const corrected = this.semaphoreManager.applyConstraints(
+          prevGraphStates, r.graphStates, prevVehicles, r.vehicles, ctx.edgesMap,
+        );
+        this.vehicles = corrected.vehicles;
+        this.vehicleGraphStates = corrected.graphStates;
       }
 
       this.tick += 1;
+
+      // Consumer side: drain one pending emergency request per tick
+      this.consumeEmergencyRequest();
       this.elapsedMs = this.startedAt ? Date.now() - this.startedAt : 0;
 
       this.evolveCongestion();
@@ -614,6 +651,20 @@ export class SimulationEngine {
     if (this.routingResult) {
       this.routingResult = { ...this.routingResult, estimatedTravelTimeS: etaS };
     }
+  }
+
+  private buildSyncMetrics(): SyncMetrics {
+    const sem = this.semaphoreManager.getMetrics();
+    const q   = this.emergencyQueue.getMetrics();
+    return {
+      semaphoreAcquisitions:  sem.acquisitions,
+      semaphoreWaits:         sem.waits,
+      blockedThisTick:        sem.blockedThisTick,
+      controlledIntersections: sem.controlledIntersections,
+      emergencyProduced:      q.produced,
+      emergencyConsumed:      q.consumed,
+      emergencyPending:       q.pending,
+    };
   }
 
   private onAmbulanceArrived(ds: DispatchState): void {

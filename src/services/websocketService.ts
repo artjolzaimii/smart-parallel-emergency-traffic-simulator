@@ -95,6 +95,7 @@ class WebSocketService {
     em.setTrafficLightMarkers(snapshot.trafficLights);
     em.setEmergencyRoute(snapshot.emergencyRoute);
     em.setDispatchState(snapshot.dispatchState ?? null);
+    useMetricsStore.getState().setSyncMetrics(snapshot.syncMetrics);
 
     const bm = useBenchmarkStore.getState();
     bm.setRunning(snapshot.benchmarkRunning);

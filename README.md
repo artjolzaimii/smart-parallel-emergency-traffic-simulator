@@ -12,17 +12,18 @@ The entire simulation backend runs inside a Next.js server process. A WebSocket 
 2. [Key Features](#2-key-features)
 3. [System Architecture](#3-system-architecture)
 4. [Parallel Programming Concepts](#4-parallel-programming-concepts)
-5. [Important Code Sections](#5-important-code-sections)
-6. [Why Parallel Programming Helps Here](#6-why-parallel-programming-helps-here)
-7. [How the Simulation Works](#7-how-the-simulation-works)
-8. [Installation](#8-installation)
-9. [Running the Project](#9-running-the-project)
-10. [Demo Workflow](#10-demo-workflow)
-11. [Benchmark Explanation](#11-benchmark-explanation)
-12. [Folder Structure](#12-folder-structure)
-13. [Technologies Used](#13-technologies-used)
-14. [Academic Relevance](#14-academic-relevance)
-15. [Future Improvements](#15-future-improvements)
+5. [Synchronization and Classical Parallel Concepts](#5-synchronization-and-classical-parallel-concepts)
+6. [Important Code Sections](#6-important-code-sections)
+7. [Why Parallel Programming Helps Here](#7-why-parallel-programming-helps-here)
+8. [How the Simulation Works](#8-how-the-simulation-works)
+9. [Installation](#9-installation)
+10. [Running the Project](#10-running-the-project)
+11. [Demo Workflow](#11-demo-workflow)
+12. [Benchmark Explanation](#12-benchmark-explanation)
+13. [Folder Structure](#13-folder-structure)
+14. [Technologies Used](#14-technologies-used)
+15. [Academic Relevance](#15-academic-relevance)
+16. [Future Improvements](#16-future-improvements)
 
 ---
 
@@ -203,7 +204,198 @@ This amortises the startup cost (50–200 ms per worker) across multiple iterati
 
 ---
 
-## 5. Important Code Sections
+## 5. Synchronization and Classical Parallel Concepts
+
+This section maps each implementation to its classical parallel programming analogue. The project is written in TypeScript/Node.js — OpenMP, pthreads, and POSIX semaphores are not available — but every concept is implemented through an equivalent abstraction.
+
+### Concept Map
+
+| Classical concept | Implementation | File |
+|---|---|---|
+| **Thread** | `Worker` (Node.js worker_threads) | `ParallelExecutor.ts`, `routeScoringWorker.ts` |
+| **Semaphore** | `IntersectionSemaphoreManager` | `synchronization/IntersectionSemaphoreManager.ts` |
+| **Critical section** | Controlled intersection node (capacity 1) | same |
+| **P(s) / wait()** | `acquire` inside `applyConstraints()` | same |
+| **V(s) / signal()** | permit auto-released at progress ≥ 0.3 | same |
+| **Producer-consumer** | `EmergencyRequestQueue` | `synchronization/EmergencyRequestQueue.ts` |
+| **Bounded buffer** | queue buffer array in `EmergencyRequestQueue` | same |
+| **Task parallelism** | 4 A* strategies dispatched to 4 workers | `EmergencyRouter.ts`, `routingWorker.ts` |
+| **Data parallelism** | vehicle array split across workers | `ParallelExecutor.ts`, `vehicleWorker.ts` |
+
+---
+
+### 5.1 IntersectionSemaphoreManager — Semaphore / Critical Section
+
+```
+Academic model:
+  sem_t lights[N];                // one semaphore per controlled intersection
+  sem_init(&lights[i], 0, 1);     // capacity = 1 (binary semaphore, mutex-like)
+
+  // Vehicle thread trying to enter intersection i:
+  sem_wait(&lights[i]);           // P(s) — blocks if count == 0
+    ... drive through ...
+  sem_post(&lights[i]);           // V(s) — release, wake a waiter
+```
+
+**TypeScript equivalent (from `IntersectionSemaphoreManager.ts`):**
+
+```typescript
+// ~15 % of graph nodes are designated as controlled intersections
+constructor(nodeIds: string[], capacityPerIntersection = 1) {
+  for (const id of nodeIds) {
+    if (stableHash(id) % 100 < 15) {       // deterministic selection
+      this.controlled.set(id, capacityPerIntersection);
+    }
+  }
+}
+
+// Called once per tick, after the executor produces updated vehicle states
+applyConstraints(prevStates, newStates, prevVehicles, newVehicles, edgesMap) {
+  for (const newState of newStates) {
+    if (crossedEdge && this.controlled.has(intersectionId)) {
+      if (heldSet.size < capacity) {
+        // ── P(s): acquire ─────────────────────────────────────────
+        heldSet.add(vehicleId);
+        this.acquisitions++;
+        // vehicle proceeds with new position
+      } else {
+        // ── blocked: revert to pre-tick state (wait one tick) ─────
+        this.waits++;
+        this.blockedThisTick++;
+        // vehicle stays at intersection node until next tick
+      }
+    }
+    // ── V(s): release when vehicle has moved past intersection ──────
+    if (progress >= 0.3) this.releasePermit(nodeId, vehicleId);
+  }
+}
+```
+
+**Key properties:**
+- **Counting semaphore**: capacity can be > 1 (e.g., two-lane intersections)
+- **Non-blocking check**: the semaphore check does not suspend a thread; instead, the vehicle's graph state is reverted for one tick (discrete-time simulation equivalent of blocking)
+- **Fairness**: FIFO-order vehicles naturally re-try on the next tick
+- **Metrics**: cumulative `acquisitions`, `waits`, and `blockedThisTick` are broadcast in every snapshot
+
+---
+
+### 5.2 EmergencyRequestQueue — Producer-Consumer
+
+```
+Academic model (POSIX / C):
+  queue_t Q;                           // shared bounded buffer
+  sem_t empty, full;                   // counting semaphores
+  pthread_mutex_t lock;
+
+  // Producer thread (user interaction):
+  pthread_mutex_lock(&lock);
+  enqueue(&Q, request);                // produce item
+  sem_post(&full);                     // signal consumer
+  pthread_mutex_unlock(&lock);
+
+  // Consumer thread (simulation tick):
+  sem_wait(&full);                     // wait for item
+  pthread_mutex_lock(&lock);
+  request = dequeue(&Q);               // consume item
+  pthread_mutex_unlock(&lock);
+```
+
+**TypeScript equivalent (from `EmergencyRequestQueue.ts`):**
+
+```typescript
+// Producer — called from WebSocket handler (user clicks "Trigger Emergency")
+enqueue(tickNum: number): void {
+  this.buffer.push({
+    id: `req-${tickNum}-${this.produced}`,
+    enqueuedAtTick: tickNum,
+    enqueuedAt: Date.now(),
+  });
+  this.produced++;
+}
+
+// Consumer — called once per simulation tick
+consume(): EmergencyRequest | null {
+  const req = this.buffer.shift();   // FIFO dequeue
+  if (req) this.consumed++;
+  return req ?? null;
+}
+```
+
+**In `SimulationEngine.tick_()`:**
+```typescript
+// Consumer side: drain one pending emergency request per tick
+this.consumeEmergencyRequest();      // processes at most one item per scheduling quantum
+
+private consumeEmergencyRequest(): void {
+  if (this.emergencyActive) return;       // mutual exclusion: one dispatch at a time
+  const req = this.emergencyQueue.consume();
+  if (!req) return;
+  this.emergencyActive = true;
+  this.dispatchState = { status: 'routing', ... };
+  void this.runEmergencyRouting();
+}
+```
+
+**Key properties:**
+- **Decoupled timing**: the producer (button click) fires at any point; the consumer processes it at the next tick boundary — identical to how OS producer-consumer buffers decouple interrupt handlers from kernel threads
+- **No mutex needed**: Node.js runs on a single-threaded event loop, so `enqueue` and `consume` cannot run concurrently — the event loop provides mutual exclusion by construction
+- **Metrics**: `produced`, `consumed`, `pending` are tracked and broadcast live
+
+---
+
+### 5.3 Worker Threads — True Parallelism
+
+```
+// Classical pthreads model:
+pthread_t workers[4];
+for (int i = 0; i < 4; i++)
+  pthread_create(&workers[i], NULL, score_routes, &chunks[i]);
+for (int i = 0; i < 4; i++)
+  pthread_join(workers[i], NULL);
+```
+
+**TypeScript equivalent (from `BenchmarkRunner.ts`):**
+
+```typescript
+// Spawn 4 persistent OS threads (worker_threads = real threads, not green threads)
+const workers = chunks.map(
+  () => new Worker(workerPath, { execArgv: ['--import', 'tsx'] }),
+);
+
+// Dispatch work — analogous to pthread_create with a task argument
+await Promise.all(
+  chunks.map((chunk, wi) =>
+    new Promise<void>((resolve, reject) => {
+      workers[wi].once('message', () => resolve());  // pthread_join
+      workers[wi].postMessage({ tasks: chunk, nodes, edges });
+    }),
+  ),
+);
+
+for (const w of workers) w.terminate();  // pthread_cancel + pthread_join
+```
+
+---
+
+### 5.4 Why TypeScript Instead of C/OpenMP
+
+OpenMP and POSIX threads are not available in the TypeScript/Node.js runtime. However, every concept maps cleanly:
+
+| C / OpenMP | Node.js equivalent | Same behaviour? |
+|---|---|---|
+| `#pragma omp parallel for` | `Promise.all(chunks.map(...))` | Yes — parallel loop |
+| `pthread_t` | `new Worker(...)` | Yes — real OS thread |
+| `sem_wait / sem_post` | `applyConstraints()` permit check | Yes — counting semaphore logic |
+| Bounded buffer | `EmergencyRequestQueue.buffer[]` | Yes — FIFO with capacity |
+| `pthread_mutex_lock` | JS event loop serialisation | Yes — mutual exclusion |
+| Shared memory | `postMessage` serialisation | No — message passing model |
+
+The key difference from OpenMP shared-memory is that Node.js workers use message passing (structured clone). This makes the IPC overhead visible and measurable — which is itself an important parallel programming lesson demonstrated by the live tick cost chart.
+
+---
+
+## 6. Important Code Sections
+
 
 ### 5.1 ParallelExecutor — Vehicle Chunk Dispatch
 
@@ -411,7 +603,7 @@ execute(vehicles, graphStates, ctx): ExecutorResult {
 
 ---
 
-## 6. Why Parallel Programming Helps Here
+## 7. Why Parallel Programming Helps Here
 
 ### Vehicle Movement: Wrong Target
 
@@ -434,7 +626,7 @@ The "Live Tick Cost" chart shows vehicle movement — a deliberately bad paralle
 
 ---
 
-## 7. How the Simulation Works
+## 8. How the Simulation Works
 
 ### Full Lifecycle
 
@@ -509,7 +701,7 @@ The "Live Tick Cost" chart shows vehicle movement — a deliberately bad paralle
 
 ---
 
-## 8. Installation
+## 9. Installation
 
 ### Prerequisites
 
@@ -549,7 +741,7 @@ The script retries three Overpass mirrors in sequence. If all fail (e.g., offlin
 
 ---
 
-## 9. Running the Project
+## 10. Running the Project
 
 ```bash
 npm run dev:all
@@ -565,7 +757,7 @@ No environment variables are required. The WebSocket URL is hardcoded in `src/se
 
 ---
 
-## 10. Demo Workflow
+## 11. Demo Workflow
 
 Follow these steps to demonstrate all parallel programming features:
 
@@ -596,7 +788,7 @@ Follow these steps to demonstrate all parallel programming features:
 
 ---
 
-## 11. Benchmark Explanation
+## 12. Benchmark Explanation
 
 ### Key Terms
 
@@ -621,7 +813,7 @@ All values derive from `performance.now()` timestamps captured immediately befor
 
 ---
 
-## 12. Folder Structure
+## 13. Folder Structure
 
 ```
 smart-parallel-emergency-traffic-simulator/
@@ -637,6 +829,7 @@ smart-parallel-emergency-traffic-simulator/
 │   │   │   ├── BenchmarkChart/      # Recharts throughput comparison bar chart
 │   │   │   ├── EmergencyMetrics/    # Live dispatch status, ETA, distance, reroutes
 │   │   │   ├── EmergencyStatusPanel/# Route quality bar, incident count, toggles
+│   │   │   ├── SyncPanel/           # Semaphore + queue metrics card
 │   │   │   ├── MetricsPanel/        # Right sidebar — all analytics panels composed
 │   │   │   └── PerformanceChart/    # Live tick cost chart (vehicle movement)
 │   │   ├── map/
@@ -667,6 +860,9 @@ smart-parallel-emergency-traffic-simulator/
 │   │   ├── vehicles/
 │   │   │   ├── VehicleMovement.ts   # moveVehicleOnGraph, interpolateEdge
 │   │   │   └── VehicleGraphState.ts # Per-vehicle (edgeId, progress) state
+│   │   ├── synchronization/         # Classical synchronization primitives
+│   │   │   ├── IntersectionSemaphoreManager.ts  # Counting semaphore / critical section
+│   │   │   └── EmergencyRequestQueue.ts         # Producer-consumer FIFO queue
 │   │   ├── traffic/                 # Traffic light phase logic
 │   │   └── utils/
 │   │       ├── fleetGenerator.ts    # Deterministic fleet placement on graph edges
@@ -715,7 +911,7 @@ smart-parallel-emergency-traffic-simulator/
 
 ---
 
-## 13. Technologies Used
+## 14. Technologies Used
 
 | Technology | Version | Role |
 |---|---|---|
@@ -734,7 +930,7 @@ smart-parallel-emergency-traffic-simulator/
 
 ---
 
-## 14. Academic Relevance
+## 15. Academic Relevance
 
 This project implements and measures several core parallel programming concepts in a realistic applied context.
 
@@ -759,7 +955,7 @@ Emergency response time optimization is an active area of research in smart city
 
 ---
 
-## 15. Future Improvements
+## 16. Future Improvements
 
 | Improvement | Description |
 |---|---|
