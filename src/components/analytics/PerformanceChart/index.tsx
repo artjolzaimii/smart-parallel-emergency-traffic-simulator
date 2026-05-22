@@ -6,56 +6,62 @@ import { useMetricsStore } from '@/src/store/metricsStore';
 export function PerformanceChart() {
   const { benchmark } = useMetricsStore();
 
-  const parallelPct = benchmark
-    ? Math.min(100, (1 / benchmark.parallelTickMs) * 100)
-    : 0;
-  const sequentialPct = benchmark
-    ? Math.min(100, (1 / benchmark.sequentialTickMs) * 100)
-    : 0;
+  // Normalise bars so the slower one fills 100 % and the faster one scales down.
+  // This makes the relative difference visible regardless of absolute magnitude.
+  const maxMs = benchmark
+    ? Math.max(benchmark.parallelTickMs, benchmark.sequentialTickMs, 0.001)
+    : 1;
 
-  const hasSpeedup = benchmark !== null;
-  const isActualSpeedup = hasSpeedup && benchmark!.speedupFactor >= 1.0;
+  const parPct  = benchmark ? Math.round((benchmark.parallelTickMs  / maxMs) * 100) : 0;
+  const seqPct  = benchmark ? Math.round((benchmark.sequentialTickMs / maxMs) * 100) : 0;
+  const ratio   = benchmark ? benchmark.parallelTickMs / Math.max(0.001, benchmark.sequentialTickMs) : null;
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-0.5 flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-          Parallel vs Sequential
+          Live Tick Cost
         </span>
         <BarChart2 className="h-3.5 w-3.5 text-gray-700" />
       </div>
-      <p className="mb-3 text-xs text-gray-700">vehicle tick computation time</p>
+      <p className="mb-3 text-xs text-gray-700">
+        Vehicle movement per tick — lightweight task; IPC overhead dominates
+      </p>
 
       <div className="space-y-3">
         <BarRow
-          label="Parallel"
+          label="Parallel tick"
           value={benchmark ? `${benchmark.parallelTickMs.toFixed(1)} ms` : '—'}
-          fill={parallelPct}
-          fillColor="bg-cyan-700"
+          fill={parPct}
+          fillColor="bg-cyan-800"
         />
         <BarRow
-          label="Sequential"
+          label="Sequential tick"
           value={benchmark ? `${benchmark.sequentialTickMs.toFixed(1)} ms` : '—'}
-          fill={sequentialPct}
+          fill={seqPct}
           fillColor="bg-gray-600"
         />
       </div>
 
-      {hasSpeedup ? (
-        isActualSpeedup ? (
-          <p className="mt-3 text-center font-mono text-xs text-cyan-500">
-            {benchmark!.speedupFactor.toFixed(2)}× speedup
+      <div className="mt-3 text-center">
+        {ratio === null ? (
+          <p className="text-xs text-gray-700">Start simulation to see tick cost</p>
+        ) : ratio > 1.05 ? (
+          <p className="font-mono text-xs text-yellow-600">
+            IPC overhead active — {ratio.toFixed(1)}× cost vs sequential
+          </p>
+        ) : ratio < 0.95 ? (
+          <p className="font-mono text-xs text-cyan-500">
+            {(1 / ratio).toFixed(1)}× faster in parallel
           </p>
         ) : (
-          <p className="mt-3 text-center font-mono text-xs text-yellow-500">
-            Parallel overhead detected
-          </p>
-        )
-      ) : (
-        <p className="mt-3 text-center text-xs text-gray-700">
-          Start simulation to compare
-        </p>
-      )}
+          <p className="font-mono text-xs text-gray-600">tick cost roughly equal</p>
+        )}
+      </div>
+
+      <p className="mt-2 text-center text-xs text-gray-700">
+        For genuine parallel speedup → see Benchmark ↓
+      </p>
     </div>
   );
 }

@@ -25,16 +25,19 @@ export class IncidentManager {
   private readonly rng = makeLcg(0xdeadbeef);
   private readonly eligibleNodes: RoadNode[];
   private readonly nodeEdges: Map<string, string[]>;
+  private readonly edgeFromNode: Map<string, string>; // edgeId → nodeId (from)
 
   constructor(nodes: RoadNode[], edges: RoadEdge[], startId: string, goalId: string) {
     // Exclude start and goal nodes to prevent incidents blocking the ambulance's origin/destination
     this.eligibleNodes = nodes.filter((n) => n.id !== startId && n.id !== goalId);
 
     this.nodeEdges = new Map();
+    this.edgeFromNode = new Map();
     for (const edge of edges) {
       const list = this.nodeEdges.get(edge.from) ?? [];
       list.push(edge.id);
       this.nodeEdges.set(edge.from, list);
+      this.edgeFromNode.set(edge.id, edge.from);
     }
   }
 
@@ -48,8 +51,15 @@ export class IncidentManager {
     }
   }
 
-  createManual(tickNum: number): void {
+  createManual(tickNum: number, preferredEdgeIds: string[] = []): void {
     if (this.incidents.size >= MAX_TOTAL) return;
+    // Prefer spawning on the active emergency route if edge IDs are provided
+    if (preferredEdgeIds.length > 0) {
+      const shuffled = [...preferredEdgeIds].sort(() => this.rng() - 0.5);
+      for (const edgeId of shuffled.slice(0, 4)) {
+        if (this.spawnOnEdge('high', tickNum, true, edgeId)) return;
+      }
+    }
     this.spawn('high', tickNum, true);
   }
 
@@ -71,6 +81,15 @@ export class IncidentManager {
     this.incidents.clear();
   }
 
+  private spawnOnEdge(severity: IncidentSeverity, tickNum: number, manual: boolean, edgeId: string): boolean {
+    const nodeId = this.edgeFromNode.get(edgeId);
+    if (!nodeId) return false;
+    const node = this.eligibleNodes.find((n) => n.id === nodeId);
+    if (!node) return false;
+    this.spawnAtNode(node, [edgeId], severity, tickNum, manual);
+    return true;
+  }
+
   private spawn(severity: IncidentSeverity, tickNum: number, manual: boolean): void {
     if (this.eligibleNodes.length === 0) return;
     const node = this.eligibleNodes[Math.floor(this.rng() * this.eligibleNodes.length)];
@@ -81,8 +100,17 @@ export class IncidentManager {
 
     const shuffled = [...edgeIds].sort(() => this.rng() - 0.5);
     const count = type === 'congestion-spike' ? Math.min(2, shuffled.length) : 1;
-    const affectedEdgeIds = shuffled.slice(0, count);
+    this.spawnAtNode(node, shuffled.slice(0, count), severity, tickNum, manual);
+  }
 
+  private spawnAtNode(
+    node: RoadNode,
+    affectedEdgeIds: string[],
+    severity: IncidentSeverity,
+    tickNum: number,
+    manual: boolean,
+  ): void {
+    const type = INCIDENT_TYPES[Math.floor(this.rng() * INCIDENT_TYPES.length)];
     const prefix = manual ? 'inc-manual' : 'inc';
     const id = `${prefix}-${tickNum}-${Math.floor(this.rng() * 9999)}`;
     this.incidents.set(id, {

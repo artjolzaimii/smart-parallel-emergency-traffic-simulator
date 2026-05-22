@@ -4,6 +4,7 @@ import { useVehicleStore } from '@/src/store/vehicleStore';
 import { useMetricsStore } from '@/src/store/metricsStore';
 import { useWsStore } from '@/src/store/wsStore';
 import { useEmergencyStore } from '@/src/store/emergencyStore';
+import { useBenchmarkStore } from '@/src/store/benchmarkStore';
 
 type SnapshotHandler = (snapshot: SimulationSnapshot) => void;
 
@@ -93,6 +94,18 @@ class WebSocketService {
     em.setEmergencyActive(snapshot.emergencyActive);
     em.setTrafficLightMarkers(snapshot.trafficLights);
     em.setEmergencyRoute(snapshot.emergencyRoute);
+    em.setDispatchState(snapshot.dispatchState ?? null);
+
+    const bm = useBenchmarkStore.getState();
+    bm.setRunning(snapshot.benchmarkRunning);
+    bm.setProgress(snapshot.benchmarkProgress);
+    if (snapshot.fullBenchmarkResult) {
+      const prev = bm.result;
+      if (prev?.timestamp !== snapshot.fullBenchmarkResult.timestamp) {
+        bm.setResult(snapshot.fullBenchmarkResult);
+        bm.pushHistory(snapshot.fullBenchmarkResult);
+      }
+    }
   }
 
   private scheduleReconnect(): void {

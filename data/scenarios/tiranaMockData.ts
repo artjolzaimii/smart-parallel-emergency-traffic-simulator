@@ -7,7 +7,8 @@ import type {
 } from '../../src/types/map';
 
 export const TIRANA_MAP_CONFIG: MapViewConfig = {
-  center: { lat: 41.3275, lng: 19.8189 },
+  // Midpoint between Grand Park dispatch origin (S) and QSUT Hospital (N).
+  center: { lat: 41.3238, lng: 19.8145 },
   zoom: 14,
 };
 
@@ -26,7 +27,7 @@ export const MOCK_VEHICLES: VehicleMarkerData[] = [
     id: 'ev-001',
     type: 'emergency',
     isEmergency: true,
-    position: { lat: 41.3286, lng: 19.8193 },
+    position: { lat: 41.310370, lng: 19.808463 }, // Grand Park / Artificial Lake
     label: 'AMB-01',
   },
 ];
@@ -40,17 +41,20 @@ export const MOCK_TRAFFIC_LIGHTS: TrafficLightMarkerData[] = [
   { id: 'tl-006', position: { lat: 41.3258, lng: 19.8245 }, phase: 'green' },
 ];
 
-// AMB-01 priority route: Skanderbeg Square → QSUT University Hospital (north)
+// AMB-01 priority route: Grand Park / Artificial Lake (S) → QSUT Hospital (N)
+// Placeholder shown before WebSocket delivers the first live snapshot.
 export const MOCK_EMERGENCY_ROUTE: EmergencyRouteData = {
   id: 'route-001',
   vehicleId: 'ev-001',
   waypoints: [
-    { lat: 41.3286, lng: 19.8193 },
-    { lat: 41.3296, lng: 19.8195 },
-    { lat: 41.3310, lng: 19.8197 },
-    { lat: 41.3328, lng: 19.8200 },
-    { lat: 41.3348, lng: 19.8203 },
-    { lat: 41.3365, lng: 19.8207 },
+    { lat: 41.310370, lng: 19.808463 }, // Grand Park dispatch origin
+    { lat: 41.3135,   lng: 19.8093 },
+    { lat: 41.3175,   lng: 19.8112 },
+    { lat: 41.3215,   lng: 19.8138 },
+    { lat: 41.3258,   lng: 19.8160 },
+    { lat: 41.3295,   lng: 19.8180 },
+    { lat: 41.3330,   lng: 19.8198 },
+    { lat: 41.3372,   lng: 19.8207 }, // QSUT Hospital
   ],
 };
 

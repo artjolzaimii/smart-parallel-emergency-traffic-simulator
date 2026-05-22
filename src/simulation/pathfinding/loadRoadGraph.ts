@@ -8,6 +8,12 @@ import {
   HOSPITAL_NODE,
 } from './tiranaRoadGraph';
 
+// Desired emergency dispatch origin — Grand Park / Artificial Lake area.
+// loadRoadGraph always selects the nearest graph node to these coords so
+// the origin is correct even if the cached startNodeId was generated with
+// an older START_TARGET in generateRoads.ts.
+const EMERGENCY_START_COORDS = { lat: 41.310370, lng: 19.808463 };
+
 export interface LoadedGraph {
   nodes: RoadNode[];
   edges: RoadEdge[];
@@ -34,7 +40,10 @@ export function loadRoadGraph(): LoadedGraph {
       console.log(
         `[Graph] Loaded OSM cache: ${raw.nodes.length} nodes, ${raw.edges.length} edges`,
       );
-      return finalize(raw.nodes, raw.edges, raw.adjacency, raw.startNodeId, raw.goalNodeId, 'osm');
+      // Always recompute startNodeId as the nearest node to the configured dispatch
+      // origin so the correct location is used regardless of when the cache was generated.
+      const startNodeId = nearestNodeId(raw.nodes, EMERGENCY_START_COORDS);
+      return finalize(raw.nodes, raw.edges, raw.adjacency, startNodeId, raw.goalNodeId, 'osm');
     } catch (err) {
       console.warn('[Graph] Failed to parse tirana-road-graph.json — using mock graph:', err);
     }
@@ -57,16 +66,55 @@ function finalize(
   goalNodeId: string,
   source: 'osm' | 'mock',
 ): LoadedGraph {
+  const nodesMap = new Map(nodes.map((n) => [n.id, n]));
+
+  const startNode = nodesMap.get(startNodeId);
+  const goalNode  = nodesMap.get(goalNodeId);
+
+  const distM = startNode
+    ? Math.round(haversineM(startNode.position, EMERGENCY_START_COORDS))
+    : -1;
+  const distNote = distM >= 0 ? `  (${distM}m from requested origin)` : '';
+
+  console.log(`[Graph] Emergency start node: ${startNodeId}`);
+  console.log(`[Graph] Emergency start coords: ${startNode?.position.lat.toFixed(6) ?? '?'}, ${startNode?.position.lng.toFixed(6) ?? '?'}${distNote}`);
+  console.log(`[Graph] Emergency destination: ${goalNodeId}  ${goalNode?.position.lat.toFixed(6) ?? '?'}, ${goalNode?.position.lng.toFixed(6) ?? '?'}`);
+
   return {
     nodes,
     edges,
-    nodesMap: new Map(nodes.map((n) => [n.id, n])),
+    nodesMap,
     edgesMap: new Map(edges.map((e) => [e.id, e])),
     adjacency,
     startNodeId,
     goalNodeId,
     source,
   };
+}
+
+function nearestNodeId(
+  nodes: RoadNode[],
+  target: { lat: number; lng: number },
+): string {
+  let bestId = nodes[0].id;
+  let bestDist = Infinity;
+  for (const n of nodes) {
+    const d = haversineM(n.position, target);
+    if (d < bestDist) { bestDist = d; bestId = n.id; }
+  }
+  return bestId;
+}
+
+function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6_371_000;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.lat * Math.PI) / 180) *
+    Math.cos((b.lat * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
 function buildAdjacency(edges: RoadEdge[]): Record<string, string[]> {

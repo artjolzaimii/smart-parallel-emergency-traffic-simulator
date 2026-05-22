@@ -1,9 +1,17 @@
 import type { RoadNode, RoadEdge } from './roadGraph';
 
-export const AMBULANCE_START_NODE = 'N01';
+// Ambulance dispatches from the Grand Park / Artificial Lake area (south)
+// to QSUT Hospital (north) — ~3.5 km through the city centre.
+export const AMBULANCE_START_NODE = 'N18';
 export const HOSPITAL_NODE = 'N07';
 
 export const TIRANA_NODES: RoadNode[] = [
+  // === Grand Park dispatch origin (south) ===
+  { id: 'N18', position: { lat: 41.310370, lng: 19.808463 }, label: 'Grand Park / Artificial Lake' },
+
+  // === Lake Park (NW) — civilian traffic only after dispatch origin change ===
+  { id: 'N17', position: { lat: 41.3447, lng: 19.7955 }, label: 'Parku Liqeni (Lake Park)' },
+
   // === Main avenue corridor (N01 → N07) ===
   { id: 'N01', position: { lat: 41.3286, lng: 19.8193 }, label: 'Skanderbeg Square' },
   { id: 'N02', position: { lat: 41.3295, lng: 19.8197 }, label: 'Bul. Dëshmorët nr.1' },
@@ -83,4 +91,18 @@ export const TIRANA_BASE_EDGES: RoadEdge[] = [
   { id: 'E21r', from: 'N16', to: 'N15', distanceM: 250, baseSpeedKph: 40, congestion: 0.45, trafficLightDelayS: 12, blocked: false },
   { id: 'E22',  from: 'N16', to: 'N08', distanceM: 300, baseSpeedKph: 40, congestion: 0.30, trafficLightDelayS: 10, blocked: false },
   { id: 'E22r', from: 'N08', to: 'N16', distanceM: 300, baseSpeedKph: 40, congestion: 0.30, trafficLightDelayS: 10, blocked: false },
+
+  // Lake Park (N17) → city network
+  { id: 'E23',  from: 'N17', to: 'N06', distanceM: 2340, baseSpeedKph: 60, congestion: 0.15, trafficLightDelayS:  8, blocked: false },
+  { id: 'E23r', from: 'N06', to: 'N17', distanceM: 2340, baseSpeedKph: 60, congestion: 0.15, trafficLightDelayS:  8, blocked: false },
+  { id: 'E24',  from: 'N17', to: 'N13', distanceM: 2330, baseSpeedKph: 50, congestion: 0.30, trafficLightDelayS: 12, blocked: false },
+  { id: 'E24r', from: 'N13', to: 'N17', distanceM: 2330, baseSpeedKph: 50, congestion: 0.30, trafficLightDelayS: 12, blocked: false },
+
+  // Grand Park (N18) → city network — dispatch origin to Skanderbeg + side street
+  // N18 → N01 (Rruga Asim Vokshi / main southern avenue, ~2 km via Blvd)
+  { id: 'E25',  from: 'N18', to: 'N01', distanceM: 2030, baseSpeedKph: 50, congestion: 0.35, trafficLightDelayS: 18, blocked: false },
+  { id: 'E25r', from: 'N01', to: 'N18', distanceM: 2030, baseSpeedKph: 50, congestion: 0.35, trafficLightDelayS: 18, blocked: false },
+  // N18 → N15 (alternative southern entry via Mine Peza, ~1.9 km)
+  { id: 'E26',  from: 'N18', to: 'N15', distanceM: 1890, baseSpeedKph: 40, congestion: 0.45, trafficLightDelayS: 22, blocked: false },
+  { id: 'E26r', from: 'N15', to: 'N18', distanceM: 1890, baseSpeedKph: 40, congestion: 0.45, trafficLightDelayS: 22, blocked: false },
 ];

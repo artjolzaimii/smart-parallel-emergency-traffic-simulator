@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Incident } from '@/src/types/incident';
 import type { TrafficLightMarkerData, EmergencyRouteData } from '@/src/types/map';
+import type { DispatchState } from '@/src/types/emergency';
 
 interface EmergencyStore {
   incidents: Incident[];
@@ -11,6 +12,7 @@ interface EmergencyStore {
   emergencyActive: boolean;
   trafficLightMarkers: TrafficLightMarkerData[];
   emergencyRoute: EmergencyRouteData | null;
+  dispatchState: DispatchState | null;
   setIncidents: (incidents: Incident[]) => void;
   setRerouteCount: (n: number) => void;
   setAutoReroute: (enabled: boolean) => void;
@@ -19,6 +21,7 @@ interface EmergencyStore {
   setEmergencyActive: (active: boolean) => void;
   setTrafficLightMarkers: (markers: TrafficLightMarkerData[]) => void;
   setEmergencyRoute: (route: EmergencyRouteData | null) => void;
+  setDispatchState: (ds: DispatchState | null) => void;
   reset: () => void;
 }
 
@@ -31,6 +34,7 @@ export const useEmergencyStore = create<EmergencyStore>()((set) => ({
   emergencyActive: false,
   trafficLightMarkers: [],
   emergencyRoute: null,
+  dispatchState: null,
   setIncidents: (incidents) => set({ incidents }),
   setRerouteCount: (rerouteCount) => set({ rerouteCount }),
   setAutoReroute: (autoRerouteEnabled) => set({ autoRerouteEnabled }),
@@ -39,5 +43,6 @@ export const useEmergencyStore = create<EmergencyStore>()((set) => ({
   setEmergencyActive: (emergencyActive) => set({ emergencyActive }),
   setTrafficLightMarkers: (trafficLightMarkers) => set({ trafficLightMarkers }),
   setEmergencyRoute: (emergencyRoute) => set({ emergencyRoute }),
-  reset: () => set({ incidents: [], rerouteCount: 0, routeQualityScore: 100, emergencyActive: false }),
+  setDispatchState: (dispatchState) => set({ dispatchState }),
+  reset: () => set({ incidents: [], rerouteCount: 0, routeQualityScore: 100, emergencyActive: false, dispatchState: null }),
 }));

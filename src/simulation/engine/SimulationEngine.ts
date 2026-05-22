@@ -1,4 +1,6 @@
 import type { SimulationStatus, SimulationConfig } from '../../types/simulation';
+import type { BenchmarkMode, FullBenchmarkResult } from '../../types/benchmark';
+import { BenchmarkRunner } from '../benchmark/BenchmarkRunner';
 import type {
   VehicleMarkerData,
   TrafficLightMarkerData,
@@ -6,7 +8,7 @@ import type {
   EmergencyRouteData,
 } from '../../types/map';
 import type { PerformanceMetrics, BenchmarkComparison } from '../../types/metrics';
-import type { RoutingResult } from '../../types/emergency';
+import type { RoutingResult, DispatchState } from '../../types/emergency';
 import type { SimulationSnapshot } from '../../types/snapshot';
 import type { TrafficLightPhase } from '../../types/traffic';
 import type { RoadEdge } from '../pathfinding/roadGraph';
@@ -21,6 +23,7 @@ import { EmergencyRouter } from '../emergency/EmergencyRouter';
 import { IncidentManager } from '../incident/IncidentManager';
 import { haversineM } from '../utils/geo';
 import { edgeTravelCostS } from '../pathfinding/roadGraph';
+import { interpolateEdge } from '../vehicles/VehicleMovement';
 import { MOCK_TRAFFIC_LIGHTS, MOCK_CONGESTION_SEGMENTS } from '../../../data/scenarios/tiranaMockData';
 
 const DEFAULT_CONFIG: SimulationConfig = {
@@ -44,6 +47,10 @@ const DYNAMIC_PHASES = [0.00, 1.05, 2.10, 0.52, 1.73, 0.87, 0.30, 1.35];
 
 const REROUTE_THRESHOLD = 1.25;
 const REROUTE_COOLDOWN = 8;
+// Simulated seconds the ambulance travels per simulation tick
+const AMBULANCE_TICK_S = 10;
+// How many edges ahead to scan for blockages
+const LOOK_AHEAD_EDGES = 5;
 
 export class SimulationEngine {
   // Independent fields
@@ -69,6 +76,11 @@ export class SimulationEngine {
   private onSnapshotCb?: (s: SimulationSnapshot) => void;
   private readonly sequential = new SequentialExecutor();
   private readonly parallel = new ParallelExecutor();
+  private benchmarkRunning = false;
+  private benchmarkProgress: number | null = null;
+  private fullBenchmarkResult: FullBenchmarkResult | null = null;
+  private benchmarkRunner!: BenchmarkRunner;
+  private dispatchState: DispatchState | null = null;
 
   // Graph-dependent fields — assigned in constructor
   private readonly graph: LoadedGraph;
@@ -108,6 +120,8 @@ export class SimulationEngine {
       vehicleId: 'ev-001',
       waypoints: startNode ? [startNode.position] : [],
     };
+
+    this.benchmarkRunner = new BenchmarkRunner(this.graph);
   }
 
   setOnSnapshot(cb: (s: SimulationSnapshot) => void): void {
@@ -141,6 +155,7 @@ export class SimulationEngine {
     this.benchmark = null;
     this.routingResult = null;
     this.emergencyActive = false;
+    this.dispatchState = null;
     this.rerouteCount = 0;
     this.lastRouteCostS = 0;
     this.lastRerouteAt = -99;
@@ -180,13 +195,57 @@ export class SimulationEngine {
   }
 
   triggerEmergency(): void {
+    if (this.emergencyActive) return;
     this.emergencyActive = true;
-    if (this.routing) return;
-    void this.runEmergencyRouting();
+    this.dispatchState = {
+      status: 'routing',
+      routeEdgeIds: [],
+      currentEdgeIndex: 0,
+      progressOnEdge: 0,
+      etaRemainingS: 0,
+      distanceRemainingM: 0,
+      startedAtTick: this.tick,
+      completedAt: null,
+      totalResponseTimeS: null,
+      reroutes: 0,
+      routeBlockedDetected: false,
+      computeMs: 0,
+      workersUsed: 0,
+      selectedStrategy: 'standard',
+    };
+    this.emit();
+    if (!this.routing) void this.runEmergencyRouting();
+  }
+
+  async runBenchmark(candidateCount: number, iterationCount: number, mode: BenchmarkMode): Promise<void> {
+    if (this.benchmarkRunning) return;
+
+    const wasRunning = this.status === 'running';
+    if (wasRunning) this.clearLoop();
+
+    this.benchmarkRunning = true;
+    this.benchmarkProgress = 0;
+    this.fullBenchmarkResult = null;
+    this.emit();
+
+    try {
+      const result = await this.benchmarkRunner.run(candidateCount, iterationCount, mode, (pct) => {
+        this.benchmarkProgress = pct;
+        this.emit();
+      });
+      this.fullBenchmarkResult = result;
+    } finally {
+      this.benchmarkRunning = false;
+      this.benchmarkProgress = null;
+      this.emit();
+    }
+
+    if (wasRunning) this.scheduleLoop();
   }
 
   createManualIncident(): void {
-    this.incidentManager.createManual(this.tick);
+    const routeEdgeIds = this.dispatchState?.routeEdgeIds ?? [];
+    this.incidentManager.createManual(this.tick, routeEdgeIds);
     this.router.applyIncidentOverrides(this.incidentManager.getEdgeOverrides());
     this.emit();
   }
@@ -221,6 +280,10 @@ export class SimulationEngine {
       emergencyPriorityEnabled: this.emergencyPriorityEnabled,
       routeQualityScore: this.routeQualityScore,
       emergencyActive: this.emergencyActive,
+      benchmarkRunning: this.benchmarkRunning,
+      benchmarkProgress: this.benchmarkProgress,
+      fullBenchmarkResult: this.fullBenchmarkResult,
+      dispatchState: this.dispatchState ? { ...this.dispatchState } : null,
     };
   }
 
@@ -289,6 +352,10 @@ export class SimulationEngine {
       this.incidentManager.tick(this.tick);
       this.router.applyIncidentOverrides(this.incidentManager.getEdgeOverrides());
 
+      if (this.dispatchState?.status === 'active') {
+        this.advanceAmbulance(ctx);
+      }
+
       if (this.emergencyActive && this.autoRerouteEnabled) {
         this.checkAndReroute();
       }
@@ -342,6 +409,8 @@ export class SimulationEngine {
   private checkAndReroute(): void {
     if (this.routing) return;
     if (this.tick - this.lastRerouteAt < REROUTE_COOLDOWN) return;
+    // advanceAmbulance handles rerouting when dispatch is tracking the ambulance
+    if (this.dispatchState?.status === 'active' || this.dispatchState?.status === 'rerouting') return;
 
     const currentCost = this.computeCurrentRouteCost();
     const routeBlocked = !isFinite(currentCost);
@@ -410,11 +479,155 @@ export class SimulationEngine {
       this.lastRouteCostS = result.totalCostS;
       if (result.found) {
         this.emergencyRoute = { ...this.emergencyRoute, waypoints: result.waypoints };
+        if (this.dispatchState?.status === 'routing') {
+          const edgeIds = this.buildRouteEdgeIds(result.nodeIds);
+          this.dispatchState = {
+            ...this.dispatchState,
+            status: 'active',
+            routeEdgeIds: edgeIds,
+            currentEdgeIndex: 0,
+            progressOnEdge: 0,
+            computeMs: result.routingComputationMs,
+            workersUsed: this.config.mode === 'parallel' ? 4 : 0,
+            selectedStrategy: result.strategy,
+          };
+        }
       }
       this.emit();
     } finally {
       this.routing = false;
     }
+  }
+
+  private buildRouteEdgeIds(nodeIds: string[]): string[] {
+    const edgeIds: string[] = [];
+    for (let i = 0; i < nodeIds.length - 1; i++) {
+      const from = nodeIds[i];
+      const to = nodeIds[i + 1];
+      const candidates = this.graph.adjacency[from] ?? [];
+      for (const eid of candidates) {
+        const edge = this.graph.edgesMap.get(eid);
+        if (edge?.to === to) {
+          edgeIds.push(eid);
+          break;
+        }
+      }
+    }
+    return edgeIds;
+  }
+
+  private advanceAmbulance(ctx: GraphContext): void {
+    const ds = this.dispatchState;
+    if (!ds || ds.status !== 'active' || ds.routeEdgeIds.length === 0) return;
+
+    const edgeId = ds.routeEdgeIds[ds.currentEdgeIndex];
+    if (!edgeId) return;
+
+    const liveEdge = ctx.edgesMap.get(edgeId);
+    if (!liveEdge) return;
+
+    const costS = edgeTravelCostS(liveEdge);
+    const delta = isFinite(costS) && costS > 0 ? AMBULANCE_TICK_S / costS : 1;
+    ds.progressOnEdge += delta;
+
+    // Carry progress forward across edges if delta > 1 (fast ambulance on short edges)
+    while (ds.progressOnEdge >= 1.0 && ds.currentEdgeIndex < ds.routeEdgeIds.length - 1) {
+      ds.progressOnEdge -= 1.0;
+      ds.currentEdgeIndex++;
+    }
+
+    if (ds.progressOnEdge >= 1.0) {
+      this.onAmbulanceArrived(ds);
+      return;
+    }
+
+    // Update ambulance marker position
+    const geomEdge = this.graph.edgesMap.get(ds.routeEdgeIds[ds.currentEdgeIndex]) ?? liveEdge;
+    if (geomEdge.coordinates && geomEdge.coordinates.length >= 2) {
+      const position = interpolateEdge(geomEdge, ds.progressOnEdge);
+      this.vehicles = this.vehicles.map((v) => (v.isEmergency ? { ...v, position } : v));
+    }
+
+    // Scan ahead for blocked edges and trigger reroute if needed
+    if (!this.routing) {
+      this.checkRouteBlockage(ctx, ds);
+    }
+
+    this.updateDispatchMetrics(ctx, ds);
+  }
+
+  private checkRouteBlockage(ctx: GraphContext, ds: DispatchState): void {
+    const end = Math.min(ds.currentEdgeIndex + LOOK_AHEAD_EDGES, ds.routeEdgeIds.length);
+    for (let i = ds.currentEdgeIndex; i < end; i++) {
+      const edge = ctx.edgesMap.get(ds.routeEdgeIds[i]);
+      if (edge?.blocked) {
+        ds.routeBlockedDetected = true;
+        ds.status = 'rerouting';
+        ds.reroutes++;
+        this.rerouteCount++;
+        this.lastRerouteAt = this.tick;
+        const currentEdge = this.graph.edgesMap.get(ds.routeEdgeIds[ds.currentEdgeIndex]);
+        const fromNodeId = currentEdge?.from ?? this.graph.startNodeId;
+        void this.rerouteAmbulanceFrom(fromNodeId, ds);
+        return;
+      }
+    }
+  }
+
+  private async rerouteAmbulanceFrom(fromNodeId: string, ds: DispatchState): Promise<void> {
+    this.routing = true;
+    try {
+      const result = await this.router.findRouteBest(fromNodeId, this.graph.goalNodeId, this.config.mode);
+      this.routingResult = result;
+      this.lastRouteCostS = result.totalCostS;
+      if (result.found) {
+        const edgeIds = this.buildRouteEdgeIds(result.nodeIds);
+        ds.routeEdgeIds = edgeIds;
+        ds.currentEdgeIndex = 0;
+        ds.progressOnEdge = 0;
+        ds.computeMs = result.routingComputationMs;
+        ds.selectedStrategy = result.strategy;
+        ds.workersUsed = this.config.mode === 'parallel' ? 4 : 0;
+        this.emergencyRoute = { ...this.emergencyRoute, waypoints: result.waypoints };
+      }
+      ds.status = 'active';
+      this.emit();
+    } finally {
+      this.routing = false;
+    }
+  }
+
+  private updateDispatchMetrics(ctx: GraphContext, ds: DispatchState): void {
+    let etaS = 0;
+    let distM = 0;
+    for (let i = ds.currentEdgeIndex; i < ds.routeEdgeIds.length; i++) {
+      const edge = ctx.edgesMap.get(ds.routeEdgeIds[i]);
+      if (!edge) continue;
+      const fraction = i === ds.currentEdgeIndex ? (1 - ds.progressOnEdge) : 1;
+      const costS = edgeTravelCostS(edge);
+      if (isFinite(costS)) etaS += costS * fraction;
+      distM += edge.distanceM * fraction;
+    }
+    ds.etaRemainingS = etaS;
+    ds.distanceRemainingM = distM;
+    // Keep global routing result ETA in sync so the metrics card updates
+    if (this.routingResult) {
+      this.routingResult = { ...this.routingResult, estimatedTravelTimeS: etaS };
+    }
+  }
+
+  private onAmbulanceArrived(ds: DispatchState): void {
+    ds.status = 'completed';
+    ds.etaRemainingS = 0;
+    ds.distanceRemainingM = 0;
+    ds.completedAt = Date.now();
+    ds.totalResponseTimeS = (this.tick - ds.startedAtTick) * AMBULANCE_TICK_S;
+    // Snap ambulance to hospital entrance
+    const goalNode = this.graph.nodesMap.get(this.graph.goalNodeId);
+    if (goalNode) {
+      this.vehicles = this.vehicles.map((v) => (v.isEmergency ? { ...v, position: goalNode.position } : v));
+    }
+    this.emergencyActive = false;
   }
 
   private emit(): void {

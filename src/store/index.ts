@@ -4,3 +4,4 @@ export * from './trafficStore';
 export * from './metricsStore';
 export * from './wsStore';
 export * from './emergencyStore';
+export * from './benchmarkStore';

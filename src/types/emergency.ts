@@ -2,6 +2,25 @@ import type { GeoPosition, SimulationMode } from './simulation';
 
 export type RouteStrategy = 'standard' | 'avoid-congestion' | 'avoid-blocked' | 'prefer-speed';
 
+export type EmergencyDispatchStatus = 'idle' | 'routing' | 'active' | 'rerouting' | 'completed';
+
+export interface DispatchState {
+  status: EmergencyDispatchStatus;
+  routeEdgeIds: string[];
+  currentEdgeIndex: number;
+  progressOnEdge: number;
+  etaRemainingS: number;
+  distanceRemainingM: number;
+  startedAtTick: number;
+  completedAt: number | null;
+  totalResponseTimeS: number | null;
+  reroutes: number;
+  routeBlockedDetected: boolean;
+  computeMs: number;
+  workersUsed: number;
+  selectedStrategy: string;
+}
+
 export interface RoutingResult {
   found: boolean;
   waypoints: GeoPosition[];

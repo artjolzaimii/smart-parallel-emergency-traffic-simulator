@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Cpu, Siren, AlertTriangle, RefreshCw, ChevronRight, Map } from 'lucide-react';
+import { X, Cpu, Siren, AlertTriangle, RefreshCw, ChevronRight, Map, BarChart2 } from 'lucide-react';
 
 const DEMO_STEPS = [
   {
@@ -18,22 +18,22 @@ const DEMO_STEPS = [
   {
     n: 3,
     title: 'Switch Sequential ↔ Parallel',
-    detail: 'Toggle execution mode. The Performance chart shows computation time per tick. Parallel mode uses 4 worker threads to move all vehicles simultaneously.',
+    detail: 'Toggle execution mode. The Live Tick Cost chart shows computation time per vehicle update. Parallel mode moves vehicles across 4 workers — but vehicle coordinate updates are lightweight, so IPC overhead often dominates. This is intentional and honest.',
   },
   {
     n: 4,
     title: 'Trigger Emergency',
-    detail: 'Activates the ambulance and runs A* pathfinding from Skanderbeg Square to QSUT Hospital. The route polyline now follows real roads. ETA appears in Emergency Routing.',
+    detail: 'Activates the ambulance from the Lake Park area (NW) to QSUT Hospital (NE) — a 2.5 km route following real roads. A* pathfinding runs. The route polyline follows road curves. ETA appears in Emergency Routing.',
   },
   {
     n: 5,
     title: 'Create Incident',
-    detail: 'Adds a random accident/blockage to a road edge. Watch congestion rise and Route Quality drop. If degradation exceeds 25%, auto-rerouting picks a new path.',
+    detail: 'Adds a random accident/blockage to a road edge. Watch congestion rise and Route Quality drop. If degradation exceeds 25%, auto-rerouting picks a new path among the 4 strategy alternatives.',
   },
   {
     n: 6,
-    title: 'Observe rerouting & metrics',
-    detail: 'The Reroutes counter increments, the route polyline changes, and TL Priority turns lights green along the new path. Compare Sequential vs Parallel routing times.',
+    title: 'Run the Benchmark',
+    detail: 'Open the Benchmark panel (bottom of the metrics column). Select candidate count and iterations, then Run Comparison. This is where parallel programming genuinely pays off: batch route optimization is compute-heavy and embarrassingly parallel. Watch sequential vs parallel timings, speedup, and efficiency.',
   },
 ];
 
@@ -46,22 +46,27 @@ const HOW_IT_WORKS = [
   {
     icon: Cpu,
     title: 'Vehicle movement',
-    text: "Each vehicle holds a currentEdgeId and progress (0→1). Every tick, it advances by speed/edgeLength and interpolates its lat/lng along the edge's coordinate array. On reaching the far node it picks the next edge from the adjacency map.",
+    text: "Each vehicle holds a currentEdgeId and progress (0→1). Every tick, it advances by speed/edgeLength and interpolates its lat/lng along the edge's coordinate array. This is a lightweight operation — moving one vehicle takes ~0.01 ms. Splitting it across worker threads adds IPC serialization overhead that exceeds the compute savings. The Live Tick Cost panel shows this honestly.",
   },
   {
     icon: Siren,
     title: 'Emergency routing',
-    text: 'A* pathfinding runs over the same graph. In parallel mode, four worker threads each evaluate a different strategy (standard, avoid-congestion, avoid-blocked, prefer-speed) simultaneously. The best result wins.',
+    text: 'A* pathfinding runs over the OSM graph from the Lake Park dispatch point to QSUT Hospital. In parallel mode, four worker threads each evaluate a different route strategy (standard, avoid-congestion, avoid-blocked, prefer-speed) simultaneously. The best result wins. This IS a good use of parallelism — each A* evaluation is independent and CPU-bound.',
+  },
+  {
+    icon: BarChart2,
+    title: 'Benchmark (primary parallel proof)',
+    text: 'The dedicated Benchmark panel evaluates batches of N random route candidate pairs, each under all 4 strategies (4 A* calls per candidate). Sequential scores them one-by-one; parallel splits the batch across 4 persistent workers. For 100–500 candidates on the OSM graph (~2 000 nodes), parallel shows genuine speedup — this is the correct workload for demonstrating parallelism.',
   },
   {
     icon: AlertTriangle,
     title: 'Incidents',
-    text: 'Incidents attach to graph edges and inject a congestion boost (or blocked flag) into the pathfinding cost function. The route cost monitor checks every 8 ticks and reroutes if cost rises by >25%.',
+    text: 'Incidents attach to graph edges and inject a congestion boost (or blocked flag) into the pathfinding cost function. The route cost monitor checks every 8 ticks and reroutes if cost rises by >25%. Incidents placed near the Lake Park → Hospital corridor will trigger visible rerouting.',
   },
   {
     icon: RefreshCw,
     title: 'Fallback',
-    text: 'If tirana-road-graph.json does not exist, the engine falls back to a handcrafted 16-node mock graph so the simulation always works.',
+    text: 'If tirana-road-graph.json does not exist, the engine falls back to a handcrafted 18-node mock graph so the simulation always works. On the mock graph the benchmark workload is trivially fast (16-node A* ≈ 0.01 ms) and IPC overhead dominates — run npm run generate:roads for meaningful parallel speedup measurements.',
   },
 ];
 
@@ -70,13 +75,10 @@ interface Props {
 }
 
 export function HowItWorksModal({ onClose }: Props) {
-  // Avoid rendering portal during SSR (document.body doesn't exist server-side)
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
-
-    // Prevent the page beneath from scrolling while modal is open
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
@@ -84,7 +86,6 @@ export function HowItWorksModal({ onClose }: Props) {
     };
   }, []);
 
-  // Close on Escape key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -94,13 +95,6 @@ export function HowItWorksModal({ onClose }: Props) {
   if (!mounted) return null;
 
   const content = (
-    /*
-     * Rendered via createPortal into document.body so it sits completely outside
-     * the React tree's DOM hierarchy — no parent stacking context (overflow:hidden,
-     * transform, filter, will-change) can clip or occlude it.
-     * z-[9999] keeps the backdrop above Leaflet's highest pane (z-700 tooltip),
-     * and the panel itself is one layer higher.
-     */
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center"
       style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
@@ -125,6 +119,20 @@ export function HowItWorksModal({ onClose }: Props) {
         <p className="mb-6 text-xs text-gray-500">
           Smart Parallel Emergency &amp; Traffic Simulator — road-graph overview &amp; demo guide
         </p>
+
+        {/* Parallel target callout */}
+        <div className="mb-6 rounded-lg border border-cyan-900 bg-cyan-950/30 p-3">
+          <p className="mb-1 text-xs font-semibold text-cyan-400">
+            Not every task benefits from parallelism
+          </p>
+          <p className="text-xs leading-relaxed text-gray-400">
+            Vehicle coordinate updates are too lightweight — IPC overhead exceeds the compute cost,
+            so the live tick panel often shows parallel mode as slower. That is honest and expected.
+            The correct parallel target is <span className="text-cyan-300">batch route optimization</span>:
+            scoring many independent A* candidate paths is CPU-bound, embarrassingly parallel, and
+            shows genuine speedup in the Benchmark panel.
+          </p>
+        </div>
 
         <div className="mb-6 space-y-4">
           {HOW_IT_WORKS.map(({ icon: Icon, title, text }) => (

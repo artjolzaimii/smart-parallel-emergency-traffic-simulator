@@ -6,8 +6,9 @@ import type {
   EmergencyRouteData,
 } from './map';
 import type { PerformanceMetrics, BenchmarkComparison } from './metrics';
-import type { RoutingResult } from './emergency';
+import type { RoutingResult, DispatchState } from './emergency';
 import type { Incident } from './incident';
+import type { FullBenchmarkResult } from './benchmark';
 
 export interface SimulationSnapshot {
   tick: number;
@@ -27,4 +28,10 @@ export interface SimulationSnapshot {
   emergencyPriorityEnabled: boolean;
   routeQualityScore: number;
   emergencyActive: boolean;
+  // Dedicated benchmark run state
+  benchmarkRunning: boolean;
+  benchmarkProgress: number | null; // 0–100 while running
+  fullBenchmarkResult: FullBenchmarkResult | null;
+  // Live ambulance dispatch tracking
+  dispatchState: DispatchState | null;
 }

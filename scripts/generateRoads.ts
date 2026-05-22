@@ -15,7 +15,9 @@ import { join } from 'path';
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 
-const BBOX = { south: 41.315, west: 19.795, north: 41.348, east: 19.845 };
+// Bbox extended south to 41.308 to include the Grand Park / Artificial Lake
+// dispatch origin at (41.310370, 19.808463).
+const BBOX = { south: 41.308, west: 19.795, north: 41.348, east: 19.845 };
 
 // Mirrors tried in order; first success wins
 const OVERPASS_MIRRORS = [
@@ -27,8 +29,8 @@ const OVERPASS_MIRRORS = [
 const USER_AGENT =
   'SPERTS-academic-project/1.0 (Smart Parallel Emergency Traffic Simulator; github.com/artjolzaimi)';
 
-// Ambulance start: Skanderbeg Square
-const START_TARGET = { lat: 41.3286, lng: 19.8193 };
+// Ambulance start: Grand Park / Artificial Lake area (south of city centre)
+const START_TARGET = { lat: 41.310370, lng: 19.808463 };
 // Goal: QSUT University Hospital (Spitali i Madh)
 const GOAL_TARGET = { lat: 41.3371, lng: 19.8205 };
 
@@ -285,7 +287,7 @@ async function main() {
 
   const startNode = nodes.find((n) => n.id === startNodeId);
   const goalNode  = nodes.find((n) => n.id === goalNodeId);
-  console.log(`[generateRoads] Start: ${startNodeId} (${startNode?.position.lat.toFixed(5)}, ${startNode?.position.lng.toFixed(5)}) ≈ Skanderbeg Square`);
+  console.log(`[generateRoads] Start: ${startNodeId} (${startNode?.position.lat.toFixed(5)}, ${startNode?.position.lng.toFixed(5)}) ≈ Grand Park / Artificial Lake`);
   console.log(`[generateRoads] Goal:  ${goalNodeId} (${goalNode?.position.lat.toFixed(5)}, ${goalNode?.position.lng.toFixed(5)}) ≈ QSUT Hospital`);
 
   const output = {

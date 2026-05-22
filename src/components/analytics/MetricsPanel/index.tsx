@@ -6,6 +6,7 @@ import { Car, AlertTriangle, Clock, Cpu } from 'lucide-react';
 import { PerformanceChart } from '@/src/components/analytics/PerformanceChart';
 import { EmergencyMetrics } from '@/src/components/analytics/EmergencyMetrics';
 import { EmergencyStatusPanel } from '@/src/components/analytics/EmergencyStatusPanel';
+import { BenchmarkPanel } from '@/src/components/analytics/BenchmarkPanel';
 import { useMetricsStore } from '@/src/store/metricsStore';
 
 interface MetricCardProps {
@@ -99,9 +100,20 @@ export function MetricsPanel() {
 
       <hr className="border-gray-800" />
 
-      <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-        Performance
-      </h2>
+      {/* ── PRIMARY PARALLEL BENCHMARK ───────────────────────────────── */}
+      <BenchmarkPanel />
+
+      <hr className="border-gray-800" />
+
+      {/* ── LIVE TICK COST (secondary context) ───────────────────────── */}
+      <div>
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+          Live Tick Cost
+        </h2>
+        <p className="mt-0.5 text-xs text-gray-700">
+          vehicle updates — lightweight; IPC overhead dominates in parallel mode
+        </p>
+      </div>
 
       <PerformanceChart />
 

@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 import type { SimulationEngine } from '../simulation/engine/SimulationEngine';
 import type { BroadcastManager } from './BroadcastManager';
 import type { SimulationMode, SimulationScenario } from '../types/simulation';
+import type { BenchmarkMode } from '../types/benchmark';
 
 interface ClientMessage {
   type: string;
@@ -48,6 +49,13 @@ export class MessageRouter {
         break;
       case 'TOGGLE_EMERGENCY_PRIORITY':
         this.engine.toggleEmergencyPriority();
+        break;
+      case 'RUN_BENCHMARK':
+        void this.engine.runBenchmark(
+          Number(msg.payload?.candidateCount ?? 100),
+          Number(msg.payload?.iterationCount ?? 3),
+          (msg.payload?.mode as BenchmarkMode) ?? 'comparison',
+        );
         break;
       default:
         console.warn('[WS] Unknown message type:', msg.type);
