@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Incident } from '@/src/types/incident';
 import type { TrafficLightMarkerData, EmergencyRouteData } from '@/src/types/map';
-import type { DispatchState } from '@/src/types/emergency';
+import type { DispatchState, DispatcherComparison, NormalDispatchComparison, AdvantageWorkload } from '@/src/types/emergency';
 
 interface EmergencyStore {
   incidents: Incident[];
@@ -13,6 +13,14 @@ interface EmergencyStore {
   trafficLightMarkers: TrafficLightMarkerData[];
   emergencyRoute: EmergencyRouteData | null;
   dispatchState: DispatchState | null;
+  // Compare Dispatchers / Parallel Advantage Scenario mode
+  dispatcherComparison: DispatcherComparison | null;
+  compareEmergencyRoute: EmergencyRouteData | null;
+  // Normal-mode dispatcher comparison (always computed after Trigger Emergency)
+  normalDispatchComparison: NormalDispatchComparison | null;
+  parallelAdvantageActive: boolean;
+  advantageWorkload: AdvantageWorkload | null;
+
   setIncidents: (incidents: Incident[]) => void;
   setRerouteCount: (n: number) => void;
   setAutoReroute: (enabled: boolean) => void;
@@ -22,6 +30,11 @@ interface EmergencyStore {
   setTrafficLightMarkers: (markers: TrafficLightMarkerData[]) => void;
   setEmergencyRoute: (route: EmergencyRouteData | null) => void;
   setDispatchState: (ds: DispatchState | null) => void;
+  setDispatcherComparison: (dc: DispatcherComparison | null) => void;
+  setCompareEmergencyRoute: (route: EmergencyRouteData | null) => void;
+  setNormalDispatchComparison: (c: NormalDispatchComparison | null) => void;
+  setParallelAdvantageActive: (active: boolean) => void;
+  setAdvantageWorkload: (w: AdvantageWorkload | null) => void;
   reset: () => void;
 }
 
@@ -35,6 +48,12 @@ export const useEmergencyStore = create<EmergencyStore>()((set) => ({
   trafficLightMarkers: [],
   emergencyRoute: null,
   dispatchState: null,
+  dispatcherComparison: null,
+  compareEmergencyRoute: null,
+  normalDispatchComparison: null,
+  parallelAdvantageActive: false,
+  advantageWorkload: null,
+
   setIncidents: (incidents) => set({ incidents }),
   setRerouteCount: (rerouteCount) => set({ rerouteCount }),
   setAutoReroute: (autoRerouteEnabled) => set({ autoRerouteEnabled }),
@@ -44,5 +63,21 @@ export const useEmergencyStore = create<EmergencyStore>()((set) => ({
   setTrafficLightMarkers: (trafficLightMarkers) => set({ trafficLightMarkers }),
   setEmergencyRoute: (emergencyRoute) => set({ emergencyRoute }),
   setDispatchState: (dispatchState) => set({ dispatchState }),
-  reset: () => set({ incidents: [], rerouteCount: 0, routeQualityScore: 100, emergencyActive: false, dispatchState: null }),
+  setDispatcherComparison: (dispatcherComparison) => set({ dispatcherComparison }),
+  setCompareEmergencyRoute: (compareEmergencyRoute) => set({ compareEmergencyRoute }),
+  setNormalDispatchComparison: (normalDispatchComparison) => set({ normalDispatchComparison }),
+  setParallelAdvantageActive: (parallelAdvantageActive) => set({ parallelAdvantageActive }),
+  setAdvantageWorkload: (advantageWorkload) => set({ advantageWorkload }),
+  reset: () => set({
+    incidents: [],
+    rerouteCount: 0,
+    routeQualityScore: 100,
+    emergencyActive: false,
+    dispatchState: null,
+    dispatcherComparison: null,
+    compareEmergencyRoute: null,
+    normalDispatchComparison: null,
+    parallelAdvantageActive: false,
+    advantageWorkload: null,
+  }),
 }));

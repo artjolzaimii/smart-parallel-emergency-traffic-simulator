@@ -5,9 +5,9 @@ import type { IncidentType, IncidentSeverity } from '@/src/types/incident';
 
 // ─── Vehicle icons ────────────────────────────────────────────────────────────
 
-function ambulanceSvg(): string {
+function ambulanceSvg(bodyColor = '#ef4444'): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-    <rect x="1" y="5" width="22" height="13" rx="3" fill="#ef4444" stroke="#fff" stroke-width="1.5"/>
+    <rect x="1" y="5" width="22" height="13" rx="3" fill="${bodyColor}" stroke="#fff" stroke-width="1.5"/>
     <rect x="9" y="8" width="6" height="2" fill="#fff"/>
     <rect x="11" y="6" width="2" height="6" fill="#fff"/>
     <rect x="2" y="16" width="4" height="3" rx="1" fill="#1f2937"/>
@@ -46,11 +46,27 @@ function motorcycleSvg(color: string): string {
   </svg>`;
 }
 
-export function createVehicleIcon(type: VehicleType): L.DivIcon {
+/**
+ * @param type                Vehicle type
+ * @param vehicleId           Optional id — used to pick per-role color in Parallel Advantage mode.
+ * @param parallelAdvantage   True when the Parallel Advantage Scenario is active.
+ *                            Only then does ev-001 show as blue (SEQ) and ev-002 as cyan (PAR).
+ *                            In normal mode, ev-001 shows as the standard red ambulance.
+ */
+export function createVehicleIcon(type: VehicleType, vehicleId?: string, parallelAdvantage = false): L.DivIcon {
   if (type === 'emergency') {
+    // Parallel Advantage Scenario role colours
+    const bodyColor =
+      parallelAdvantage && vehicleId === 'ev-002' ? '#06b6d4'   // PAR → cyan
+      : parallelAdvantage && vehicleId === 'ev-001' ? '#3b82f6'  // SEQ → blue
+      : '#ef4444';                                                // normal → red
+    const glowColor =
+      parallelAdvantage && vehicleId === 'ev-002' ? 'rgba(6,182,212,0.9)'
+      : parallelAdvantage && vehicleId === 'ev-001' ? 'rgba(59,130,246,0.9)'
+      : 'rgba(239,68,68,0.9)';
     return L.divIcon({
       className: '',
-      html: `<div style="filter:drop-shadow(0 0 6px rgba(239,68,68,0.9));animation:marker-pulse 1.2s ease-in-out infinite">${ambulanceSvg()}</div>`,
+      html: `<div style="filter:drop-shadow(0 0 6px ${glowColor});animation:marker-pulse 1.2s ease-in-out infinite">${ambulanceSvg(bodyColor)}</div>`,
       iconSize: [24, 24],
       iconAnchor: [12, 12],
     });

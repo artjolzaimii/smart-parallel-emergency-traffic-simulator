@@ -1,8 +1,9 @@
 'use client';
 
-import { type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { clsx } from 'clsx';
-import { Siren, Layers, AlertTriangle, RefreshCw, Zap } from 'lucide-react';
+import { Siren, Layers, AlertTriangle, RefreshCw, Zap, Play } from 'lucide-react';
+import type { AdvantageWorkload } from '@/src/types/emergency';
 import { Button } from '@/src/components/ui/Button';
 import { SimulationControls } from '@/src/components/controls/SimulationControls';
 import { SpeedSlider } from '@/src/components/controls/SpeedSlider';
@@ -14,10 +15,20 @@ import type { SimulationMode } from '@/src/types/simulation';
 
 const VEHICLE_COUNTS = [10, 25, 50, 100, 200, 500];
 
+const WORKLOAD_OPTIONS: { value: AdvantageWorkload; label: string; candidates: number; desc: string }[] = [
+  { value: 'standard', label: 'Standard', candidates: 500,  desc: '2 000 A* evals' },
+  { value: 'heavy',    label: 'Heavy',    candidates: 1000, desc: '4 000 A* evals' },
+  { value: 'extreme',  label: 'Extreme',  candidates: 2000, desc: '8 000 A* evals' },
+];
+
 export function Sidebar() {
   const { config } = useSimulationStore();
-  const autoRerouteEnabled = useEmergencyStore((s) => s.autoRerouteEnabled);
-  const priorityEnabled    = useEmergencyStore((s) => s.emergencyPriorityEnabled);
+  const autoRerouteEnabled      = useEmergencyStore((s) => s.autoRerouteEnabled);
+  const priorityEnabled         = useEmergencyStore((s) => s.emergencyPriorityEnabled);
+  const emergencyActive         = useEmergencyStore((s) => s.emergencyActive);
+  const parallelAdvantageActive = useEmergencyStore((s) => s.parallelAdvantageActive);
+
+  const [selectedWorkload, setSelectedWorkload] = useState<AdvantageWorkload>('heavy');
 
   return (
     <aside className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900">
@@ -81,20 +92,81 @@ export function Sidebar() {
               variant="danger"
               size="md"
               fullWidth
+              disabled={emergencyActive || parallelAdvantageActive}
               onClick={() => wsService.send('TRIGGER_EMERGENCY')}
             >
               <Siren className="h-4 w-4" />
               Trigger Emergency
             </Button>
+
+            <p className="rounded border border-gray-800 bg-gray-950/50 px-2 py-1.5 text-xs text-gray-600 leading-relaxed">
+              Single ambulance. Computes both{' '}
+              <span className="text-blue-400 font-medium">sequential</span> and{' '}
+              <span className="text-cyan-400 font-medium">parallel</span> routes.
+              Dispatcher Comparison panel appears in metrics.
+            </p>
+
             <Button
               variant="secondary"
               size="md"
               fullWidth
+              disabled={emergencyActive || parallelAdvantageActive}
               onClick={() => wsService.send('CREATE_INCIDENT')}
             >
               <AlertTriangle className="h-4 w-4" />
               Create Incident
             </Button>
+          </div>
+        </Section>
+
+        <Divider />
+
+        <Section label="Parallel Advantage">
+          <div className="space-y-2">
+            {/* Workload selector */}
+            <div>
+              <p className="mb-1.5 text-xs text-gray-500">Workload (candidates × 4 strategies)</p>
+              <div className="flex gap-1">
+                {WORKLOAD_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    disabled={parallelAdvantageActive}
+                    onClick={() => setSelectedWorkload(opt.value)}
+                    className={clsx(
+                      'flex-1 rounded border px-1 py-1.5 text-center transition-colors duration-150',
+                      selectedWorkload === opt.value
+                        ? 'border-cyan-700 bg-cyan-950 text-cyan-300'
+                        : 'border-gray-700 bg-transparent text-gray-500 hover:border-gray-600 hover:text-gray-400',
+                      parallelAdvantageActive && 'opacity-50 cursor-not-allowed',
+                    )}
+                  >
+                    <div className="text-xs font-semibold">{opt.label}</div>
+                    <div className="text-xs opacity-70">{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <Button
+              variant="primary"
+              size="md"
+              fullWidth
+              disabled={parallelAdvantageActive}
+              onClick={() => wsService.send('RUN_PARALLEL_ADVANTAGE_SCENARIO', { workload: selectedWorkload })}
+            >
+              <Play className="h-4 w-4" />
+              {parallelAdvantageActive ? 'Scenario Running…' : 'Run Parallel Advantage Scenario'}
+            </Button>
+
+            <div className="rounded border border-cyan-900 bg-cyan-950/20 px-2 py-2 space-y-1">
+              <p className="text-xs font-semibold text-cyan-400">How it works</p>
+              <ul className="space-y-0.5 text-xs text-gray-500">
+                <li>→ <span className="text-blue-400 font-medium">SEQ</span>: all A* evals run in one thread</li>
+                <li>→ <span className="text-cyan-400 font-medium">PAR</span>: same evals split across 4 persistent workers</li>
+                <li>→ Both ambulances drive at <span className="text-gray-300">identical speed</span></li>
+                <li>→ PAR starts sooner — parallel computation finishes first</li>
+              </ul>
+            </div>
           </div>
         </Section>
 

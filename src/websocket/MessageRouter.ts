@@ -3,6 +3,7 @@ import type { SimulationEngine } from '../simulation/engine/SimulationEngine';
 import type { BroadcastManager } from './BroadcastManager';
 import type { SimulationMode, SimulationScenario } from '../types/simulation';
 import type { BenchmarkMode } from '../types/benchmark';
+import type { AdvantageWorkload } from '../types/emergency';
 
 interface ClientMessage {
   type: string;
@@ -38,6 +39,10 @@ export class MessageRouter {
       case 'SET_SCENARIO':
         this.engine.updateConfig({ scenario: msg.payload?.scenario as SimulationScenario });
         break;
+      case 'TOGGLE_COMPARE_MODE':
+        // Legacy: now a no-op; use RUN_PARALLEL_ADVANTAGE_SCENARIO instead
+        this.engine.toggleCompareMode();
+        break;
       case 'TRIGGER_EMERGENCY':
         this.engine.triggerEmergency();
         break;
@@ -50,6 +55,11 @@ export class MessageRouter {
       case 'TOGGLE_EMERGENCY_PRIORITY':
         this.engine.toggleEmergencyPriority();
         break;
+      case 'RUN_PARALLEL_ADVANTAGE_SCENARIO': {
+        const workload = (msg.payload?.workload as AdvantageWorkload | undefined) ?? 'heavy';
+        void this.engine.runParallelAdvantageScenario(workload);
+        break;
+      }
       case 'RUN_BENCHMARK':
         void this.engine.runBenchmark(
           Number(msg.payload?.candidateCount ?? 100),

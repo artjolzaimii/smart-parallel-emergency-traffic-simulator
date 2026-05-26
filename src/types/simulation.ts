@@ -16,6 +16,11 @@ export interface SimulationConfig {
   speed: number;
   vehicleCount: number;
   scenario: SimulationScenario;
+  /** @deprecated Use parallelAdvantageActive instead. Kept for internal engine use. */
+  compareMode: boolean;
+  /** When true, "Run Parallel Advantage Scenario" is active:
+   *  two ambulances (SEQ + PAR) with computation-delay-based head-start mechanic. */
+  parallelAdvantageActive: boolean;
 }
 
 export interface SimulationState {

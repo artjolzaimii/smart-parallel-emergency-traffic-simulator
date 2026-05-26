@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Cpu, Siren, AlertTriangle, RefreshCw, ChevronRight, Map, BarChart2 } from 'lucide-react';
+import { X, Cpu, Siren, AlertTriangle, RefreshCw, ChevronRight, Map, BarChart2, Zap } from 'lucide-react';
 
 const DEMO_STEPS = [
   {
@@ -22,16 +22,21 @@ const DEMO_STEPS = [
   },
   {
     n: 4,
-    title: 'Trigger Emergency',
-    detail: 'Activates the ambulance from the Lake Park area (NW) to QSUT Hospital (NE) — a 2.5 km route following real roads. A* pathfinding runs. The route polyline follows road curves. ETA appears in Emergency Routing.',
+    title: 'Trigger Emergency (normal mode)',
+    detail: 'Activates one ambulance from the Lake Park area (NW) to QSUT Hospital (NE). Both sequential and parallel dispatchers compute routes simultaneously. The Dispatcher Comparison panel shows both compute times — one ambulance follows the parallel route (best of 4 strategies).',
   },
   {
     n: 5,
     title: 'Create Incident',
-    detail: 'Adds a random accident/blockage to a road edge. Watch congestion rise and Route Quality drop. If degradation exceeds 25%, auto-rerouting picks a new path among the 4 strategy alternatives.',
+    detail: 'Adds a random accident/blockage to a road edge. Watch congestion rise and Route Quality drop. If degradation exceeds 25%, auto-rerouting triggers. Both seq and par reroute compute times are shown in the comparison panel.',
   },
   {
     n: 6,
+    title: 'Run Parallel Advantage Scenario',
+    detail: 'Click "Run Parallel Advantage Scenario" in the sidebar. Two ambulances appear (SEQ blue, PAR cyan). Each waits at the station while its dispatcher computes the route using a heavy 16-evaluation workload. Because PAR finishes computing sooner, it starts moving sooner. Both ambulances drive at identical speed — PAR only gains advantage from shorter computation time.',
+  },
+  {
+    n: 7,
     title: 'Run the Benchmark',
     detail: 'Open the Benchmark panel (bottom of the metrics column). Select candidate count and iterations, then Run Comparison. This is where parallel programming genuinely pays off: batch route optimization is compute-heavy and embarrassingly parallel. Watch sequential vs parallel timings, speedup, and efficiency.',
   },
@@ -54,14 +59,19 @@ const HOW_IT_WORKS = [
     text: 'A* pathfinding runs over the OSM graph from the Lake Park dispatch point to QSUT Hospital. In parallel mode, four worker threads each evaluate a different route strategy (standard, avoid-congestion, avoid-blocked, prefer-speed) simultaneously. The best result wins. This IS a good use of parallelism — each A* evaluation is independent and CPU-bound.',
   },
   {
-    icon: BarChart2,
-    title: 'Benchmark (primary parallel proof)',
-    text: 'The dedicated Benchmark panel evaluates batches of N random route candidate pairs, each under all 4 strategies (4 A* calls per candidate). Sequential scores them one-by-one; parallel splits the batch across 4 persistent workers. For 100–500 candidates on the OSM graph (~2 000 nodes), parallel shows genuine speedup — this is the correct workload for demonstrating parallelism.',
+    icon: Zap,
+    title: 'Why parallelism helps dispatch — not driving',
+    text: 'Parallel programming does NOT make an ambulance drive faster. Physical travel time depends on road distance, congestion, and vehicle speed — not computation speed. What parallelism improves is the dispatch system: faster route calculation, faster rerouting after incidents, faster evaluation of multiple route strategies, and faster decision-making under heavy traffic. The ambulance benefits from starting sooner because the route was computed faster.',
   },
   {
     icon: AlertTriangle,
-    title: 'Incidents',
-    text: 'Incidents attach to graph edges and inject a congestion boost (or blocked flag) into the pathfinding cost function. The route cost monitor checks every 8 ticks and reroutes if cost rises by >25%. Incidents placed near the Lake Park → Hospital corridor will trigger visible rerouting.',
+    title: 'Parallel Advantage Scenario — honest mechanics',
+    text: 'Both SEQ and PAR ambulances drive at exactly the same physical speed. SEQ uses one A* in the main thread (fast for simple cases, slower under heavy load). PAR uses 4 workers running 4 strategies × 4 candidates simultaneously. The dispatch delay for each ambulance is proportional to its route computation time: 5 ms of compute = 1 tick of ambulance wait. Displayed compute times are real measured wall-clock values.',
+  },
+  {
+    icon: BarChart2,
+    title: 'Benchmark (primary parallel proof)',
+    text: 'The dedicated Benchmark panel evaluates batches of N random route candidate pairs, each under all 4 strategies (4 A* calls per candidate). Sequential scores them one-by-one; parallel splits the batch across 4 persistent workers. For 100–500 candidates on the OSM graph (~2 000 nodes), parallel shows genuine speedup — this is the correct workload for demonstrating parallelism.',
   },
   {
     icon: RefreshCw,
@@ -120,17 +130,23 @@ export function HowItWorksModal({ onClose }: Props) {
           Smart Parallel Emergency &amp; Traffic Simulator — road-graph overview &amp; demo guide
         </p>
 
-        {/* Parallel target callout */}
-        <div className="mb-6 rounded-lg border border-cyan-900 bg-cyan-950/30 p-3">
-          <p className="mb-1 text-xs font-semibold text-cyan-400">
-            Not every task benefits from parallelism
+        {/* Key parallel insight callout */}
+        <div className="mb-6 rounded-lg border border-cyan-900 bg-cyan-950/30 p-3 space-y-2">
+          <p className="text-xs font-semibold text-cyan-400">
+            What parallel programming actually improves
           </p>
           <p className="text-xs leading-relaxed text-gray-400">
+            Parallelism does <span className="text-white font-semibold">not</span> make the ambulance drive faster.
+            It makes the <span className="text-cyan-300">dispatch system compute routes faster</span> — evaluating
+            multiple strategies simultaneously in worker threads. The ambulance benefits because the dispatcher
+            finishes computing sooner, so the ambulance can start moving sooner.
+          </p>
+          <p className="text-xs leading-relaxed text-gray-500">
             Vehicle coordinate updates are too lightweight — IPC overhead exceeds the compute cost,
             so the live tick panel often shows parallel mode as slower. That is honest and expected.
-            The correct parallel target is <span className="text-cyan-300">batch route optimization</span>:
+            The correct parallel target is <span className="text-cyan-300">route optimization</span>:
             scoring many independent A* candidate paths is CPU-bound, embarrassingly parallel, and
-            shows genuine speedup in the Benchmark panel.
+            shows genuine speedup in the Benchmark and Parallel Advantage Scenario.
           </p>
         </div>
 

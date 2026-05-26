@@ -8,7 +8,10 @@ import { EmergencyMetrics } from '@/src/components/analytics/EmergencyMetrics';
 import { EmergencyStatusPanel } from '@/src/components/analytics/EmergencyStatusPanel';
 import { BenchmarkPanel } from '@/src/components/analytics/BenchmarkPanel';
 import { SyncPanel } from '@/src/components/analytics/SyncPanel';
+import { ComparePanel } from '@/src/components/analytics/ComparePanel';
+import { NormalDispatchPanel } from '@/src/components/analytics/NormalDispatchPanel';
 import { useMetricsStore } from '@/src/store/metricsStore';
+import { useEmergencyStore } from '@/src/store/emergencyStore';
 
 interface MetricCardProps {
   icon: ReactNode;
@@ -47,6 +50,8 @@ function formatTravelTime(ms: number): string {
 
 export function MetricsPanel() {
   const { metrics } = useMetricsStore();
+  const normalDispatchComparison = useEmergencyStore((s) => s.normalDispatchComparison);
+  const parallelAdvantageActive = useEmergencyStore((s) => s.parallelAdvantageActive);
   const congestionPct = Math.round(metrics.congestionLevel * 100);
 
   const congestionColor =
@@ -98,6 +103,14 @@ export function MetricsPanel() {
       <EmergencyMetrics />
 
       <EmergencyStatusPanel />
+
+      {/* Normal mode dispatcher comparison — shown after Trigger Emergency (single ambulance) */}
+      {normalDispatchComparison && !parallelAdvantageActive && (
+        <NormalDispatchPanel comparison={normalDispatchComparison} />
+      )}
+
+      {/* Parallel Advantage Scenario race panel — self-hides when scenario is not active */}
+      <ComparePanel />
 
       <hr className="border-gray-800" />
 

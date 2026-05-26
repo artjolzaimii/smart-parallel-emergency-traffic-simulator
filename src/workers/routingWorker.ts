@@ -10,26 +10,39 @@ interface WorkerMessage {
   startId: string;
   goalId: string;
   strategy: RouteStrategy;
+  /** When > 1, run A* this many times with varied edge cost weights to simulate
+   *  a heavier route-evaluation workload (used by Parallel Advantage Scenario). */
+  heavyRuns?: number;
 }
 
-function applyStrategy(edges: RoadEdge[], strategy: RouteStrategy): RoadEdge[] {
+// Variant weight multipliers for heavy-mode iterations
+const HEAVY_VARIANT_WEIGHTS = [1.0, 1.15, 0.85, 1.3];
+
+function applyStrategy(edges: RoadEdge[], strategy: RouteStrategy, variantIndex = 0): RoadEdge[] {
+  const cw = HEAVY_VARIANT_WEIGHTS[variantIndex % HEAVY_VARIANT_WEIGHTS.length];
   switch (strategy) {
     case 'avoid-congestion':
       return edges.map((e) => ({
         ...e,
-        congestion: Math.min(1, e.congestion * 2),
+        congestion: Math.min(1, e.congestion * 2 * cw),
         trafficLightDelayS: e.trafficLightDelayS * 1.5,
       }));
     case 'avoid-blocked':
-      return edges.filter((e) => !e.blocked);
+      return edges.filter((e) => !e.blocked).map((e) => ({
+        ...e,
+        congestion: e.congestion * cw,
+      }));
     case 'prefer-speed':
       return edges.map((e) => ({
         ...e,
         trafficLightDelayS: 0,
-        congestion: e.congestion * 0.5,
+        congestion: e.congestion * 0.5 * cw,
       }));
     default:
-      return edges;
+      return edges.map((e) => ({
+        ...e,
+        congestion: e.congestion * cw,
+      }));
   }
 }
 
@@ -43,10 +56,23 @@ function buildAdjacency(edges: RoadEdge[]): Map<string, RoadEdge[]> {
   return adj;
 }
 
-parentPort?.on('message', ({ nodes, edges, startId, goalId, strategy }: WorkerMessage) => {
+parentPort?.on('message', ({ nodes, edges, startId, goalId, strategy, heavyRuns = 1 }: WorkerMessage) => {
   const nodesMap = new Map<string, RoadNode>(nodes.map((n) => [n.id, n]));
-  const stratEdges = applyStrategy(edges, strategy);
-  const adjacency = buildAdjacency(stratEdges);
-  const result: PathResult = aStar(nodesMap, adjacency, startId, goalId);
-  parentPort?.postMessage(result);
+  let best: PathResult | null = null;
+
+  // Run heavyRuns iterations with slightly different edge cost weights
+  // This creates a realistic multi-candidate route evaluation workload
+  for (let i = 0; i < heavyRuns; i++) {
+    const stratEdges = applyStrategy(edges, strategy, i);
+    const adjacency = buildAdjacency(stratEdges);
+    const result: PathResult = aStar(nodesMap, adjacency, startId, goalId);
+    if (!best || (result.found && result.totalCostS < (best.totalCostS ?? Infinity))) {
+      best = result;
+    }
+  }
+
+  const finalResult: PathResult = best ?? {
+    found: false, nodeIds: [], waypoints: [], totalCostS: Infinity, totalDistanceM: 0, roadsEvaluated: 0,
+  };
+  parentPort?.postMessage(finalResult);
 });

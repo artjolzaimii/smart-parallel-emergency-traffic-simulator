@@ -95,6 +95,11 @@ class WebSocketService {
     em.setTrafficLightMarkers(snapshot.trafficLights);
     em.setEmergencyRoute(snapshot.emergencyRoute);
     em.setDispatchState(snapshot.dispatchState ?? null);
+    em.setDispatcherComparison(snapshot.dispatcherComparison ?? null);
+    em.setCompareEmergencyRoute(snapshot.compareEmergencyRoute ?? null);
+    em.setNormalDispatchComparison(snapshot.normalDispatchComparison ?? null);
+    em.setParallelAdvantageActive(snapshot.parallelAdvantageActive ?? false);
+    em.setAdvantageWorkload(snapshot.advantageWorkload ?? null);
     useMetricsStore.getState().setSyncMetrics(snapshot.syncMetrics);
 
     const bm = useBenchmarkStore.getState();

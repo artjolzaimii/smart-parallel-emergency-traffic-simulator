@@ -67,6 +67,8 @@ The benchmark panel in the UI measures and proves this speedup with real timings
 | **WebSocket streaming** | Every simulation tick broadcasts a full state snapshot to all connected browser clients via WebSocket. |
 | **Benchmark / stress test** | A dedicated benchmark panel runs sequential and parallel route optimization passes over N candidate pairs and reports throughput (candidates/sec), speedup, efficiency, and improvement percentage — all measured. |
 | **Dashboard analytics** | Live metrics panel with vehicle count, congestion level, emergency ETA, worker thread count, tick rate, and performance chart. |
+| **Dispatcher Comparison Panel** | After every "Trigger Emergency", both sequential and parallel routes are computed. The panel shows both compute times, route costs, speedup factor, and (after incidents) rerouting reaction times — for the single ambulance in normal mode. |
+| **Parallel Advantage Scenario** | A dedicated two-ambulance mode that demonstrates the computation-delay advantage honestly. SEQ and PAR ambulances start at the same point, drive at the same speed, but PAR starts moving sooner because its dispatcher finishes computing faster. |
 
 ---
 
@@ -813,7 +815,113 @@ All values derive from `performance.now()` timestamps captured immediately befor
 
 ---
 
-## 13. Folder Structure
+## 13. Parallel vs Sequential Dispatcher — Correct Framing
+
+### Why comparing physical ambulance speed is wrong
+
+A common misconception: "the parallel ambulance should arrive faster because parallel is faster."
+
+**This is wrong.** Parallel programming affects computation speed, not physical driving speed. An ambulance travels at whatever speed its vehicle can sustain on the road network. No amount of parallelism in the dispatch software makes the ambulance drive faster between two points.
+
+**What parallelism actually improves:**
+
+| What parallelism changes | What it does not change |
+|---|---|
+| Route computation time | Physical ambulance speed |
+| Rerouting reaction speed | Distance between dispatch and hospital |
+| Number of strategies evaluated | Road network topology |
+| Quality of route selected | Traffic laws and physics |
+
+The ambulance benefits from parallelism indirectly: because the dispatch system finishes computing sooner, the ambulance starts moving sooner. Under a heavy routing workload (many candidate evaluations, multiple strategies), this delay is meaningful.
+
+---
+
+### Normal Mode: Dispatcher Comparison Panel
+
+When you click **Trigger Emergency** (single ambulance mode):
+
+1. Both dispatchers compute routes for the **same ambulance**:
+   - **Sequential dispatcher**: runs one A* with the standard strategy in the main thread
+   - **Parallel dispatcher**: spawns 4 workers, each evaluating one strategy simultaneously
+2. The ambulance follows the parallel route (it evaluates more strategies → usually better)
+3. The **Dispatcher Comparison** panel appears in the right sidebar showing:
+   - Both compute times (real `performance.now()` measurements)
+   - Route cost (ETA) for each dispatcher's recommended route
+   - Speedup factor and winner
+   - After an incident: rerouting compute times for both dispatchers
+
+This is honest: sometimes sequential is faster (small graphs, low overhead), sometimes parallel wins. Both results are shown as-is.
+
+---
+
+### Parallel Advantage Scenario: Two Ambulances
+
+Click **Run Parallel Advantage Scenario** to see the computation delay effect visually.
+
+#### How it works
+
+1. Both ambulances start at the same origin simultaneously
+2. Each waits at the station while its dispatcher computes the route using **heavy workload routing**:
+   - **16 A* evaluations** (4 strategies × 4 variant weight passes)
+   - Sequential: all 16 run one-by-one in the main thread
+   - Parallel: 4 workers run simultaneously, each doing 4 A* evaluations
+3. PAR typically finishes computing first → PAR ambulance starts moving sooner
+4. Both ambulances drive at **exactly the same physical speed** after departure
+5. Any progress advantage for PAR comes **only** from earlier dispatch, not faster driving
+
+#### Computation delay scaling
+
+To make the dispatch delay effect visible in the animation:
+
+```
+5 ms of route computation time = 1 simulation tick of ambulance wait
+```
+
+This scale factor is transparent and explained in the UI. Displayed compute times are real `performance.now()` values — only the translation to animation ticks uses the scale factor.
+
+#### What the comparison panel shows
+
+During the scenario, the right sidebar displays:
+
+| Metric | Description |
+|---|---|
+| Compute time | Real measured routing time (ms) for each dispatcher |
+| Dispatch delay | How many ticks each ambulance waited at the station |
+| Route progress % | How far along the route each ambulance is |
+| Waiting (x/y ticks) | Countdown showing ambulance waiting before departure |
+| Reroutes | How many times each dispatcher had to recalculate |
+| Total time | Full response time from dispatch to hospital arrival |
+| Speedup factor | `seqMs / parMs` — real compute speedup |
+
+#### Why both ambulances use the same driving speed
+
+The engine uses `AMBULANCE_TICK_S = 10` (10 simulated seconds per tick) for **both** ambulances. The only source of difference between SEQ and PAR progress is:
+
+1. **Initial dispatch delay** — proportional to route computation time
+2. **Rerouting delay** — when an incident forces rerouting, the ambulance pauses while its dispatcher recalculates
+
+The simulation does not fake any advantage. If sequential happens to compute faster on a small graph (due to low IPC overhead), sequential wins — this is shown honestly.
+
+---
+
+### What the parallel dispatcher does
+
+The parallel dispatcher spawns 4 `worker_threads` simultaneously, each evaluating one strategy:
+
+| Worker | Strategy | Description |
+|---|---|---|
+| W1 | `standard` | Standard time-based edge weights |
+| W2 | `avoid-congestion` | Edge congestion doubled — prefers open roads |
+| W3 | `avoid-blocked` | Filters out blocked edges entirely before searching |
+| W4 | `prefer-speed` | Ignores traffic light delays and halves congestion weight |
+
+In the heavy workload scenario, each worker runs **4 variant passes** (slightly varied edge cost weights), for a total of 16 A* evaluations split across 4 threads. The best result wins.
+
+All numbers displayed in the UI come from `performance.now()` wall-clock measurements. Nothing is faked or estimated.
+
+---
+
+## 15. Folder Structure
 
 ```
 smart-parallel-emergency-traffic-simulator/
@@ -930,7 +1038,7 @@ smart-parallel-emergency-traffic-simulator/
 
 ---
 
-## 15. Academic Relevance
+## 16. Academic Relevance
 
 This project implements and measures several core parallel programming concepts in a realistic applied context.
 
@@ -955,7 +1063,7 @@ Emergency response time optimization is an active area of research in smart city
 
 ---
 
-## 16. Future Improvements
+## 17. Future Improvements
 
 | Improvement | Description |
 |---|---|

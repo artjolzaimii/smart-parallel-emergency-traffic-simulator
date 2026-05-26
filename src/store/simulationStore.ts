@@ -22,6 +22,8 @@ const DEFAULT_CONFIG: SimulationConfig = {
   speed: 1,
   vehicleCount: 50,
   scenario: 'morning-rush',
+  compareMode: false,
+  parallelAdvantageActive: false,
 };
 
 export const useSimulationStore = create<SimulationStore>()((set) => ({

@@ -6,7 +6,7 @@ import type {
   EmergencyRouteData,
 } from './map';
 import type { PerformanceMetrics, BenchmarkComparison } from './metrics';
-import type { RoutingResult, DispatchState } from './emergency';
+import type { RoutingResult, DispatchState, DispatcherComparison, NormalDispatchComparison, AdvantageWorkload } from './emergency';
 import type { Incident } from './incident';
 import type { FullBenchmarkResult } from './benchmark';
 
@@ -36,4 +36,14 @@ export interface SimulationSnapshot {
   dispatchState: DispatchState | null;
   // Synchronization subsystem metrics
   syncMetrics: SyncMetrics;
+  // Compare Dispatchers / Parallel Advantage Scenario — null when not active
+  dispatcherComparison: DispatcherComparison | null;
+  compareEmergencyRoute: EmergencyRouteData | null;
+  /** Always present after the first emergency is triggered in normal mode.
+   *  Shows sequential vs parallel dispatch compute time comparison. */
+  normalDispatchComparison: NormalDispatchComparison | null;
+  /** True when Parallel Advantage Scenario is active. */
+  parallelAdvantageActive: boolean;
+  /** Which workload level was chosen for the current Parallel Advantage run. */
+  advantageWorkload: AdvantageWorkload | null;
 }

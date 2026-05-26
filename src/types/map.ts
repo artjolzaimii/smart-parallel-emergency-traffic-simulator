@@ -27,6 +27,8 @@ export interface EmergencyRouteData {
   id: string;
   vehicleId: string;
   waypoints: GeoPosition[];
+  /** Optional hex color override — used in Compare Dispatchers mode. */
+  color?: string;
 }
 
 export interface MapViewConfig {
