@@ -1,1095 +1,518 @@
-# Smart Parallel Emergency Response & Traffic Control Simulator
+# SPERTS — Smart Parallel Emergency Response & Traffic Control Simulator
 
-**SPERTS** is a real-time city traffic simulator built to demonstrate the practical impact of parallel programming on computationally expensive urban planning problems. The simulator models an ambulance dispatching from the Grand Park / Artificial Lake area of Tirana, Albania, navigating to QSUT University Hospital through a live OSM-derived road graph — while vehicles move, incidents spawn, congestion evolves, and traffic lights respond to emergency priority.
+A real-time city traffic simulator that demonstrates the practical impact of **parallel programming** on emergency dispatch systems, built on a real OpenStreetMap road graph of Tirana, Albania.
 
-The entire simulation backend runs inside a Next.js server process. A WebSocket connection streams live snapshots to the browser at every tick. All performance numbers displayed — tick cost, route compute time, benchmark speedup — are **real measured values from `performance.now()`**, never estimated or hardcoded.
+All timing values shown in the interface — route compute times, benchmark speedups, dispatch delays — are **real measured wall-clock values** from `performance.now()`. Nothing is estimated or hardcoded.
 
 ---
 
 ## Table of Contents
 
 1. [Project Overview](#1-project-overview)
-2. [Key Features](#2-key-features)
-3. [System Architecture](#3-system-architecture)
-4. [Parallel Programming Concepts](#4-parallel-programming-concepts)
-5. [Synchronization and Classical Parallel Concepts](#5-synchronization-and-classical-parallel-concepts)
-6. [Important Code Sections](#6-important-code-sections)
-7. [Why Parallel Programming Helps Here](#7-why-parallel-programming-helps-here)
-8. [How the Simulation Works](#8-how-the-simulation-works)
-9. [Installation](#9-installation)
-10. [Running the Project](#10-running-the-project)
-11. [Demo Workflow](#11-demo-workflow)
-12. [Benchmark Explanation](#12-benchmark-explanation)
-13. [Folder Structure](#13-folder-structure)
-14. [Technologies Used](#14-technologies-used)
-15. [Academic Relevance](#15-academic-relevance)
-16. [Future Improvements](#16-future-improvements)
+2. [The Core Idea](#2-the-core-idea)
+3. [Key Features](#3-key-features)
+4. [Parallel Programming — What, Why, and How](#4-parallel-programming--what-why-and-how)
+5. [Parallel Concepts Used](#5-parallel-concepts-used)
+6. [Architecture](#6-architecture)
+7. [Installation](#7-installation)
+8. [Running the Project](#8-running-the-project)
+9. [Demo Guide: How to See the Expected Results](#9-demo-guide-how-to-see-the-expected-results)
+10. [Expected Results Summary](#10-expected-results-summary)
+11. [Important Note About Parallel Overhead](#11-important-note-about-parallel-overhead)
+12. [Scripts Reference](#12-scripts-reference)
+13. [Technologies Used](#13-technologies-used)
+14. [Academic Relevance](#14-academic-relevance)
+15. [Limitations and Future Work](#15-limitations-and-future-work)
 
 ---
 
 ## 1. Project Overview
 
-### The Real-World Problem
+### The Problem
 
-Emergency vehicles in dense urban environments face a fundamental challenge: every second lost in transit is a second lost in medical response. A city's road network is not static — it is a dynamic graph where edge weights (travel cost) change continuously due to congestion, incidents, traffic signals, and road blockages. An ambulance dispatcher cannot rely on a pre-computed route; it must find the current best path, detect when that path degrades, and re-plan in real time.
+Emergency vehicles in dense urban environments face a fundamental challenge: every second lost in dispatch is a second lost in medical response. A city's road network is a dynamic, weighted graph where edge costs change continuously due to live vehicle traffic, incidents, congestion, and traffic signals. An ambulance dispatcher cannot rely on a pre-computed route — it must find the current best path, detect when that path degrades, and re-plan in real time.
 
-This simulator models exactly that scenario:
+SPERTS simulates exactly this scenario:
 
-- An ambulance is dispatched from the Botanical Park area (Parku Artificial) of Tirana
-- Its destination is QSUT University Hospital, ~3.5 km north through the city centre
-- The road network is derived from real OpenStreetMap data via the Overpass API
-- Congestion evolves dynamically each tick using sinusoidal functions applied to live edge weights
+- An ambulance is dispatched from the **Artificial Lake park area** of Tirana, Albania
+- Its destination is **QSUT University Hospital**, approximately 3.5 km north through the city centre
+- The road network is derived from real **OpenStreetMap** data (**9,488 nodes, 17,388 edges**)
+- **Live vehicle density** drives edge congestion every tick — more vehicles on a road means higher cost
+- **Traffic pattern profiles** (Morning Rush, Evening Rush, Night, Emergency Mode) affect how strongly vehicles congest roads and how often incidents occur
 - Incidents can block edges and force the ambulance to reroute from its current position
-- Traffic lights near the emergency route are set to green while the dispatch is active
+- Traffic lights near the emergency route switch to green while the dispatch is active
 
-### Why Parallel Programming Matters Here
+### Why This Is Industrially Relevant
 
-Route optimization is inherently expensive. Finding the optimal path in a weighted city graph using A* is O(E log V) per query. In practice, a robust emergency routing system evaluates **multiple strategies** simultaneously: a standard shortest-time path, a congestion-avoiding path, a blocked-edge-free path, and a raw speed-preference path. Each strategy produces a different weighted graph, and each requires an independent A* search.
+Modern smart-city systems do exactly this at scale: cities like Singapore, Amsterdam, and Los Angeles use adaptive traffic management platforms that run continuous route optimisation loops. When an emergency is detected, the system must evaluate hundreds or thousands of candidate routes across different strategies simultaneously. The faster this computation completes, the earlier the ambulance can be dispatched.
 
-Four strategies × N candidate origin-destination pairs = N×4 A* searches with **zero shared mutable state between them**. This is an embarrassingly parallel workload. Node.js worker threads allow these searches to run across CPU cores simultaneously, reducing wall-clock time by a factor proportional to the number of cores available.
-
-The benchmark panel in the UI measures and proves this speedup with real timings.
+This is a real, CPU-bound, embarrassingly parallel workload.
 
 ---
 
-## 2. Key Features
+## 2. The Core Idea
+
+> **Parallel programming does not make the ambulance drive faster.**
+
+Physical driving speed depends on road conditions, congestion, and the ambulance's own engine — not on how fast the dispatcher's computer is. What parallelism improves is the **dispatch system**:
+
+- Computing the optimal route faster (by evaluating multiple strategies simultaneously)
+- Reacting faster to congestion changes (lower reroute computation time)
+- Starting the ambulance sooner because the dispatcher finishes computing sooner
+
+In the **Visual Parallel Demo**, two ambulances are dispatched simultaneously. Both drive at exactly the same speed. The only difference is when they start moving: each waits at the station while its dispatcher computes the route. Because the parallel dispatcher finishes computing first, it dispatches the ambulance earlier — and that head start translates directly into earlier arrival at the hospital.
+
+---
+
+## 3. Key Features
 
 | Feature | Description |
 |---|---|
-| **Real OSM road graph** | Fetches central Tirana roads from the Overpass API and caches a routing-ready graph JSON. Falls back to a hand-crafted mock graph if offline. |
-| **Live vehicle simulation** | Up to 500 civilian vehicles (cars, trucks, motorcycles) move along OSM edges using graph-based interpolation. |
-| **Ambulance emergency dispatch** | Single ambulance moves edge-by-edge along the computed route with live ETA and distance countdown. |
-| **Dynamic A\* routing** | Route is computed using a custom A* with a min-heap. Four strategies are evaluated; the lowest-cost path is selected. |
-| **Incident system** | Manual and auto-spawned incidents block or congest edges. Manual incidents prefer to target the active emergency route. |
-| **Traffic light priority** | Traffic lights within 200 m of the emergency route waypoints are forced to green while the dispatch is active. |
-| **Sequential vs Parallel modes** | All vehicle updates and route computations can run in either mode. The mode is switchable live without restarting. |
-| **Live rerouting** | The engine scans 5 edges ahead on the ambulance's route each tick. On detecting a blocked edge, it immediately triggers an async A* reroute from the ambulance's current position. |
-| **WebSocket streaming** | Every simulation tick broadcasts a full state snapshot to all connected browser clients via WebSocket. |
-| **Benchmark / stress test** | A dedicated benchmark panel runs sequential and parallel route optimization passes over N candidate pairs and reports throughput (candidates/sec), speedup, efficiency, and improvement percentage — all measured. |
-| **Dashboard analytics** | Live metrics panel with vehicle count, congestion level, emergency ETA, worker thread count, tick rate, and performance chart. |
-| **Dispatcher Comparison Panel** | After every "Trigger Emergency", both sequential and parallel routes are computed. The panel shows both compute times, route costs, speedup factor, and (after incidents) rerouting reaction times — for the single ambulance in normal mode. |
-| **Parallel Advantage Scenario** | A dedicated two-ambulance mode that demonstrates the computation-delay advantage honestly. SEQ and PAR ambulances start at the same point, drive at the same speed, but PAR starts moving sooner because its dispatcher finishes computing faster. |
+| **Real OSM road graph** | 9,488 nodes, 17,388 edges from central Tirana via Overpass API |
+| **Live vehicle simulation** | Up to 500 civilian vehicles (cars, trucks, motorcycles) moving along OSM edges |
+| **Vehicle-density congestion** | Every tick, vehicles are counted per edge; density drives `edge.congestion`, which scales A\* cost and vehicle speed |
+| **Traffic pattern profiles** | Morning Rush, Evening Rush, Night, Emergency Mode — affect density multiplier, incident probability, reroute sensitivity |
+| **Emergency routing (A\*)** | A\* pathfinding from dispatch point to QSUT Hospital, evaluating 4 strategy variants |
+| **Incidents on active route** | Manual incidents are placed 3–9 edges ahead of the ambulance's current position |
+| **Automatic rerouting** | Detects blocked edges or route cost degradation; triggers re-computation from current position |
+| **Traffic light priority** | Lights within 200 m of the active route switch to green during emergency |
+| **Normal emergency mode** | Single ambulance; shows SEQ vs PAR compute time comparison side by side |
+| **Visual Parallel Demo** | Two ambulances (SEQ blue, PAR cyan) wait for their dispatcher then race to hospital |
+| **Analysis Lab (modal)** | Full benchmark runner, live diagnostics, synchronization metrics, event log |
+| **WebSocket live updates** | Simulation server pushes snapshots to the browser every tick |
+| **Compact command-center UI** | No-scroll dashboard; all controls, map, and key metrics visible in one screen |
+| **Event timeline** | Chronological log of emergency triggered, routes computed, incidents, reroutes, arrival |
 
 ---
 
-## 3. System Architecture
+## 4. Parallel Programming — What, Why, and How
 
-### Text Architecture Diagram
+### The Routing Workload
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                         Browser (Next.js 16)                       │
-│                                                                    │
-│  ┌──────────────────┐  ┌────────────────────┐  ┌────────────────┐ │
-│  │  MapClient       │  │  MetricsPanel      │  │  ControlPanel  │ │
-│  │  (React Leaflet) │  │  BenchmarkPanel    │  │  SimControls   │ │
-│  │  VehicleLayer    │  │  EmergencyMetrics  │  │  IncidentBtn   │ │
-│  │  RouteLayer      │  │  PerformanceChart  │  │  ModeToggle    │ │
-│  └────────┬─────────┘  └─────────┬──────────┘  └───────┬────────┘ │
-│           │                      │                     │          │
-│           └──────────────────────┴─────────────────────┘          │
-│                             Zustand Stores                         │
-│         vehicleStore / emergencyStore / metricsStore / wsStore     │
-│                                │                                   │
-│                       websocketService.ts                          │
-└────────────────────────────────┼───────────────────────────────────┘
-                          WebSocket (ws://localhost:3001)
-┌────────────────────────────────┼───────────────────────────────────┐
-│                      Node.js Server Process                        │
-│                                                                    │
-│                      WebSocketServer.ts                            │
-│                      MessageRouter.ts                              │
-│                                │                                   │
-│                      SimulationEngine.ts ◄──── BenchmarkRunner.ts  │
-│         ┌──────────────────────┼───────────────────┐              │
-│         │                      │                   │              │
-│  SequentialExecutor    ParallelExecutor      EmergencyRouter       │
-│  (main thread)         (4 × Worker)          (4 × Worker)          │
-│         │                      │                   │              │
-│         │              vehicleWorker.ts    routingWorker.ts        │
-│         │                                 routeScoringWorker.ts    │
-│         │                                                          │
-│  ─────────────────────────────────────────────────────────────    │
-│  loadRoadGraph.ts  →  tirana-road-graph.json  (OSM cache)         │
-│  tiranaRoadGraph.ts  (mock fallback)                               │
-│  aStar.ts  /  roadGraph.ts                                         │
-│  IncidentManager.ts                                                │
-└────────────────────────────────────────────────────────────────────┘
-```
+When the dispatcher receives an emergency call, it must answer: *"What is the best route to the hospital right now?"*
 
-### Component Responsibilities
+"Best" is not a single answer — it depends on the strategy:
 
-| Module | Responsibility |
+| Strategy | What it optimises |
 |---|---|
-| `SimulationEngine` | Master loop. Owns all simulation state. Ticks vehicles, incidents, congestion. Triggers routing and ambulance movement. Broadcasts snapshots. |
-| `SequentialExecutor` | Moves all vehicles in the main thread in one pass. Measures wall-clock cost honestly. |
-| `ParallelExecutor` | Splits vehicles into 4 equal chunks. Dispatches each chunk to a persistent worker via `postMessage`. Merges results. |
-| `EmergencyRouter` | Holds the live edge state (with incident overrides). Runs A* per strategy. In parallel mode uses 4 worker threads. |
-| `BenchmarkRunner` | Generates deterministic origin-destination task sets. Runs multi-strategy A* sequentially or in parallel. Measures throughput and speedup. |
-| `IncidentManager` | Spawns auto and manual incidents. Applies edge congestion boosts and blockages. Prefers route edges on manual spawn. |
-| `loadRoadGraph` | Loads and validates the OSM cache. Falls back to mock graph. Overrides `startNodeId` at runtime via nearest-node lookup. |
-| `MessageRouter` | Routes incoming WebSocket commands to engine methods. |
-| `BroadcastManager` | Fans out the snapshot JSON to all connected WebSocket clients. |
-| Zustand stores | Thin reactive state bridges between WebSocket service and React components. No logic. |
+| `standard` | Minimum total travel time |
+| `avoid-congestion` | Avoids highly congested edges |
+| `avoid-blocked` | Routes around blocked/incident edges |
+| `prefer-speed` | Prefers roads with higher base speed limits |
 
----
+Each strategy produces a different edge-weight graph. Each graph requires a separate A\* search. The searches are **completely independent of each other** — they share no mutable state.
 
-## 4. Parallel Programming Concepts
+Additionally, for reliability, the dispatcher evaluates not just one pair (start → hospital) but N **candidate origin-destination pairs** around the dispatch zone. Each candidate under each strategy = one A\* call.
 
-### 4.1 Worker Threads
+**Total evaluations = candidateCount × 4 strategies**
 
-The project uses Node.js `worker_threads` — true OS threads with separate V8 heaps — rather than `child_process` or browser Web Workers. Workers are imported as TypeScript files using `tsx` as the import hook (`execArgv: ['--import', 'tsx']`), which allows sharing type definitions with the main thread without a separate build step.
-
-Three distinct worker types exist:
-
-| Worker | File | Purpose |
+| Workload | Candidates | Total A\* calls |
 |---|---|---|
-| Vehicle worker | `vehicleWorker.ts` | Processes a chunk of civilian vehicles per tick |
-| Routing worker | `routingWorker.ts` | Runs A* for one route strategy (used by `EmergencyRouter`) |
-| Scoring worker | `routeScoringWorker.ts` | Evaluates all 4 strategies on a subset of candidate pairs (used by `BenchmarkRunner`) |
+| Standard | 500 | 2,000 |
+| Heavy | 1,000 | 4,000 |
+| Extreme | 2,000 | 8,000 |
 
-### 4.2 Task Parallelism
+A\* on the Tirana graph (~9,500 nodes) is non-trivial. Running 4,000 independent searches sequentially takes seconds. Running them in parallel takes a fraction of that.
 
-Both the routing system and the benchmark demonstrate **task parallelism**: the same logical operation (A* pathfinding) is applied to independent inputs simultaneously across workers.
+### How the Parallel Workers Are Implemented
 
-In `EmergencyRouter`, four strategies (`standard`, `avoid-congestion`, `avoid-blocked`, `prefer-speed`) are dispatched to four workers with `Promise.all`. Each worker receives the same graph but applies a different weight transformation before searching. There is no shared mutable state — each worker operates on its own in-memory copy of the edge array.
-
-In `BenchmarkRunner`, N candidate pairs are split into 4 equal chunks. Each worker receives its chunk and runs all 4 strategies on every pair in its chunk. Total work = N × 4 A* searches, split evenly.
-
-### 4.3 Data Partitioning
-
-The benchmark splits the candidate task array using a ceiling-division chunk scheme:
+SPERTS uses **Node.js `worker_threads`** — real OS threads, not event-loop concurrency:
 
 ```typescript
-const chunkSize = Math.ceil(tasks.length / WORKER_COUNT);
-const chunks = Array.from({ length: WORKER_COUNT }, (_, i) =>
-  tasks.slice(i * chunkSize, (i + 1) * chunkSize),
-).filter((c) => c.length > 0);
-```
+// src/simulation/workers/HeavyDispatchWorkerPool.ts
+import { Worker } from 'worker_threads';
 
-Each chunk is an independent slice — no overlap, no synchronization needed during execution. Workers do not communicate with each other; they only send a result back to the main thread via `parentPort.postMessage`.
-
-For vehicle movement, `ParallelExecutor` applies the same pattern: the vehicle array is split into contiguous chunks by vehicle index.
-
-### 4.4 Sequential vs Parallel Comparison
-
-The simulation engine maintains both execution paths simultaneously. In sequential mode, `SequentialExecutor.execute()` runs the vehicle update loop in the main thread and measures the wall-clock duration. In parallel mode, `ParallelExecutor.execute()` distributes the same work across workers and measures the total round-trip time including IPC.
-
-Both modes produce identical output. The difference is only execution time — and the benchmark panel measures it honestly.
-
-### 4.5 IPC Overhead and Why Not All Tasks Benefit
-
-A critical engineering insight demonstrated by this simulator: **parallelism is not always faster**.
-
-Vehicle coordinate updates take approximately 0.01–0.05 ms for 50 vehicles in the main thread. Dispatching 50 vehicles to 4 workers via `postMessage`, waiting for results, and merging them incurs ~10–50 ms of serialization and IPC overhead. For this lightweight task, the parallel cost is orders of magnitude higher than the sequential cost.
-
-The live tick cost panel explicitly labels this: the parallel tick time is higher than sequential for vehicle movement. This is an honest observation, not a bug.
-
-Route optimization using A* is a fundamentally different class of work. A single A* run over a 5,000-node OSM graph (central Tirana) takes 10–100 ms of CPU time. Evaluating 100 candidates × 4 strategies = 400 A* calls, taking several seconds sequentially. This is the correct target for parallel acceleration.
-
-### 4.6 Persistent Worker Pools
-
-The `BenchmarkRunner` spawns workers once per benchmark phase and reuses them across all iterations:
-
-```typescript
-// Workers spawned once and reused across all iterations to amortise startup cost
-const workers = chunks.map(
-  () => new Worker(workerPath, { execArgv: ['--import', 'tsx'] }),
-);
-for (let iter = 0; iter < iterationCount; iter++) {
-  await Promise.all(chunks.map((chunk, wi) => sendToWorker(workers[wi], chunk)));
-}
-for (const w of workers) w.terminate();
-```
-
-This amortises the startup cost (50–200 ms per worker) across multiple iterations, making the comparison fair. A naive implementation that spawns fresh workers per iteration would produce misleading results dominated by spawn overhead.
-
----
-
-## 5. Synchronization and Classical Parallel Concepts
-
-This section maps each implementation to its classical parallel programming analogue. The project is written in TypeScript/Node.js — OpenMP, pthreads, and POSIX semaphores are not available — but every concept is implemented through an equivalent abstraction.
-
-### Concept Map
-
-| Classical concept | Implementation | File |
-|---|---|---|
-| **Thread** | `Worker` (Node.js worker_threads) | `ParallelExecutor.ts`, `routeScoringWorker.ts` |
-| **Semaphore** | `IntersectionSemaphoreManager` | `synchronization/IntersectionSemaphoreManager.ts` |
-| **Critical section** | Controlled intersection node (capacity 1) | same |
-| **P(s) / wait()** | `acquire` inside `applyConstraints()` | same |
-| **V(s) / signal()** | permit auto-released at progress ≥ 0.3 | same |
-| **Producer-consumer** | `EmergencyRequestQueue` | `synchronization/EmergencyRequestQueue.ts` |
-| **Bounded buffer** | queue buffer array in `EmergencyRequestQueue` | same |
-| **Task parallelism** | 4 A* strategies dispatched to 4 workers | `EmergencyRouter.ts`, `routingWorker.ts` |
-| **Data parallelism** | vehicle array split across workers | `ParallelExecutor.ts`, `vehicleWorker.ts` |
-
----
-
-### 5.1 IntersectionSemaphoreManager — Semaphore / Critical Section
-
-```
-Academic model:
-  sem_t lights[N];                // one semaphore per controlled intersection
-  sem_init(&lights[i], 0, 1);     // capacity = 1 (binary semaphore, mutex-like)
-
-  // Vehicle thread trying to enter intersection i:
-  sem_wait(&lights[i]);           // P(s) — blocks if count == 0
-    ... drive through ...
-  sem_post(&lights[i]);           // V(s) — release, wake a waiter
-```
-
-**TypeScript equivalent (from `IntersectionSemaphoreManager.ts`):**
-
-```typescript
-// ~15 % of graph nodes are designated as controlled intersections
-constructor(nodeIds: string[], capacityPerIntersection = 1) {
-  for (const id of nodeIds) {
-    if (stableHash(id) % 100 < 15) {       // deterministic selection
-      this.controlled.set(id, capacityPerIntersection);
-    }
-  }
-}
-
-// Called once per tick, after the executor produces updated vehicle states
-applyConstraints(prevStates, newStates, prevVehicles, newVehicles, edgesMap) {
-  for (const newState of newStates) {
-    if (crossedEdge && this.controlled.has(intersectionId)) {
-      if (heldSet.size < capacity) {
-        // ── P(s): acquire ─────────────────────────────────────────
-        heldSet.add(vehicleId);
-        this.acquisitions++;
-        // vehicle proceeds with new position
-      } else {
-        // ── blocked: revert to pre-tick state (wait one tick) ─────
-        this.waits++;
-        this.blockedThisTick++;
-        // vehicle stays at intersection node until next tick
-      }
-    }
-    // ── V(s): release when vehicle has moved past intersection ──────
-    if (progress >= 0.3) this.releasePermit(nodeId, vehicleId);
-  }
-}
-```
-
-**Key properties:**
-- **Counting semaphore**: capacity can be > 1 (e.g., two-lane intersections)
-- **Non-blocking check**: the semaphore check does not suspend a thread; instead, the vehicle's graph state is reverted for one tick (discrete-time simulation equivalent of blocking)
-- **Fairness**: FIFO-order vehicles naturally re-try on the next tick
-- **Metrics**: cumulative `acquisitions`, `waits`, and `blockedThisTick` are broadcast in every snapshot
-
----
-
-### 5.2 EmergencyRequestQueue — Producer-Consumer
-
-```
-Academic model (POSIX / C):
-  queue_t Q;                           // shared bounded buffer
-  sem_t empty, full;                   // counting semaphores
-  pthread_mutex_t lock;
-
-  // Producer thread (user interaction):
-  pthread_mutex_lock(&lock);
-  enqueue(&Q, request);                // produce item
-  sem_post(&full);                     // signal consumer
-  pthread_mutex_unlock(&lock);
-
-  // Consumer thread (simulation tick):
-  sem_wait(&full);                     // wait for item
-  pthread_mutex_lock(&lock);
-  request = dequeue(&Q);               // consume item
-  pthread_mutex_unlock(&lock);
-```
-
-**TypeScript equivalent (from `EmergencyRequestQueue.ts`):**
-
-```typescript
-// Producer — called from WebSocket handler (user clicks "Trigger Emergency")
-enqueue(tickNum: number): void {
-  this.buffer.push({
-    id: `req-${tickNum}-${this.produced}`,
-    enqueuedAtTick: tickNum,
-    enqueuedAt: Date.now(),
-  });
-  this.produced++;
-}
-
-// Consumer — called once per simulation tick
-consume(): EmergencyRequest | null {
-  const req = this.buffer.shift();   // FIFO dequeue
-  if (req) this.consumed++;
-  return req ?? null;
-}
-```
-
-**In `SimulationEngine.tick_()`:**
-```typescript
-// Consumer side: drain one pending emergency request per tick
-this.consumeEmergencyRequest();      // processes at most one item per scheduling quantum
-
-private consumeEmergencyRequest(): void {
-  if (this.emergencyActive) return;       // mutual exclusion: one dispatch at a time
-  const req = this.emergencyQueue.consume();
-  if (!req) return;
-  this.emergencyActive = true;
-  this.dispatchState = { status: 'routing', ... };
-  void this.runEmergencyRouting();
-}
-```
-
-**Key properties:**
-- **Decoupled timing**: the producer (button click) fires at any point; the consumer processes it at the next tick boundary — identical to how OS producer-consumer buffers decouple interrupt handlers from kernel threads
-- **No mutex needed**: Node.js runs on a single-threaded event loop, so `enqueue` and `consume` cannot run concurrently — the event loop provides mutual exclusion by construction
-- **Metrics**: `produced`, `consumed`, `pending` are tracked and broadcast live
-
----
-
-### 5.3 Worker Threads — True Parallelism
-
-```
-// Classical pthreads model:
-pthread_t workers[4];
-for (int i = 0; i < 4; i++)
-  pthread_create(&workers[i], NULL, score_routes, &chunks[i]);
-for (int i = 0; i < 4; i++)
-  pthread_join(workers[i], NULL);
-```
-
-**TypeScript equivalent (from `BenchmarkRunner.ts`):**
-
-```typescript
-// Spawn 4 persistent OS threads (worker_threads = real threads, not green threads)
-const workers = chunks.map(
-  () => new Worker(workerPath, { execArgv: ['--import', 'tsx'] }),
-);
-
-// Dispatch work — analogous to pthread_create with a task argument
-await Promise.all(
-  chunks.map((chunk, wi) =>
-    new Promise<void>((resolve, reject) => {
-      workers[wi].once('message', () => resolve());  // pthread_join
-      workers[wi].postMessage({ tasks: chunk, nodes, edges });
-    }),
-  ),
-);
-
-for (const w of workers) w.terminate();  // pthread_cancel + pthread_join
-```
-
----
-
-### 5.4 Why TypeScript Instead of C/OpenMP
-
-OpenMP and POSIX threads are not available in the TypeScript/Node.js runtime. However, every concept maps cleanly:
-
-| C / OpenMP | Node.js equivalent | Same behaviour? |
-|---|---|---|
-| `#pragma omp parallel for` | `Promise.all(chunks.map(...))` | Yes — parallel loop |
-| `pthread_t` | `new Worker(...)` | Yes — real OS thread |
-| `sem_wait / sem_post` | `applyConstraints()` permit check | Yes — counting semaphore logic |
-| Bounded buffer | `EmergencyRequestQueue.buffer[]` | Yes — FIFO with capacity |
-| `pthread_mutex_lock` | JS event loop serialisation | Yes — mutual exclusion |
-| Shared memory | `postMessage` serialisation | No — message passing model |
-
-The key difference from OpenMP shared-memory is that Node.js workers use message passing (structured clone). This makes the IPC overhead visible and measurable — which is itself an important parallel programming lesson demonstrated by the live tick cost chart.
-
----
-
-## 6. Important Code Sections
-
-
-### 5.1 ParallelExecutor — Vehicle Chunk Dispatch
-
-```typescript
-// src/simulation/engine/ParallelExecutor.ts
 const WORKER_COUNT = 4;
 
-async execute(vehicles, graphStates, edges, adjacency): Promise<ExecutorResult> {
-  const start = performance.now();
-
-  const chunkSize = Math.ceil(vehicles.length / this.workers.length);
-  const chunks = [];
-  for (let i = 0; i < vehicles.length; i += chunkSize) {
-    chunks.push({
-      vehicles: vehicles.slice(i, i + chunkSize),
-      graphStates: graphStates.slice(i, i + chunkSize),
-    });
-  }
-
-  const results = await Promise.all(
-    chunks.map((chunk, i) =>
-      this.dispatch(this.workers[i % this.workers.length], {
-        vehicles: chunk.vehicles,
-        graphStates: chunk.graphStates,
-        edges,
-        adjacency,
-      }),
-    ),
-  );
-
-  return {
-    vehicles: results.flatMap((r) => r.vehicles),
-    graphStates: results.flatMap((r) => r.graphStates),
-    durationMs: performance.now() - start,
-  };
-}
+// Workers are spawned ONCE per scenario and kept alive.
+// The road graph is serialized to each worker at initialization —
+// subsequent compute calls send only the task list (~KB IPC payload).
+await pool.initialize(nodes, edges);   // graph cached in worker memory
+const results = await pool.compute(tasks, startId, goalId);
+pool.terminate();
 ```
 
-### 5.2 Vehicle Worker — Worker Thread Entry Point
-
 ```typescript
-// src/workers/vehicleWorker.ts
+// src/workers/heavyDispatchWorker.ts
 import { parentPort } from 'worker_threads';
-import { moveVehicleOnGraph } from '../simulation/vehicles/VehicleMovement';
+import { aStar } from '../simulation/pathfinding/aStar';
 
-parentPort?.on('message', ({ vehicles, graphStates, edges, adjacency }) => {
-  const edgesMap = new Map(edges.map((e) => [e.id, e]));
-  const stateMap = new Map(graphStates.map((s) => [s.id, s]));
-
-  const results = vehicles.map((v) => {
-    const state = stateMap.get(v.id);
-    if (!state) return { vehicle: v, state: { id: v.id, edgeId: '', progress: 0 } };
-    return moveVehicleOnGraph(v, state, edgesMap, adjacency);
-  });
-
-  parentPort?.postMessage({
-    vehicles: results.map((r) => r.vehicle),
-    graphStates: results.map((r) => r.state),
-  });
+// Worker receives a chunk of tasks and runs A* for each
+parentPort?.on('message', (msg) => {
+  if (msg.type === 'init') {
+    // Build adjacency maps per strategy, cache in worker memory
+  }
+  if (msg.type === 'compute') {
+    // Run A* for each task chunk, return results
+  }
 });
 ```
 
-### 5.3 Route Scoring Worker — Multi-Strategy A* per Chunk
+### Sequential vs Parallel
 
-```typescript
-// src/workers/routeScoringWorker.ts
-const STRATEGIES = ['standard', 'avoid-congestion', 'avoid-blocked', 'prefer-speed'];
+```
+Sequential dispatcher (main thread):
+  Task 1 → A*  →
+  Task 2 → A*      →
+  Task 3 → A*          →
+  Task 4 → A*              →   result
+  Total: T1 + T2 + T3 + T4
 
-parentPort?.on('message', ({ tasks, nodes, edges }: WorkerInput) => {
-  const start = performance.now();
-  const nodesMap = new Map(nodes.map((n) => [n.id, n]));
-  let scored = 0;
-
-  for (const task of tasks) {
-    for (const strategy of STRATEGIES) {
-      const stratEdges = applyStrategy(edges, strategy);
-      const adj = buildAdjacency(stratEdges);
-      aStar(nodesMap, adj, task.fromNodeId, task.toNodeId);
-      scored++;
-    }
-  }
-
-  parentPort?.postMessage({ scored, durationMs: performance.now() - start });
-});
+Parallel dispatcher (4 worker threads):
+  Worker 1: Task 1 → A*  →
+  Worker 2: Task 2 → A*  →
+  Worker 3: Task 3 → A*  →     result
+  Worker 4: Task 4 → A*  →
+  Total: max(T1, T2, T3, T4) ≈ T/4
 ```
 
-### 5.4 BenchmarkRunner — Sequential vs Parallel Phases
+The parallel dispatcher can compute routes and react to incidents in roughly **¼ the time** on a 4-core machine — which directly translates into the ambulance starting earlier.
 
-```typescript
-// src/simulation/benchmark/BenchmarkRunner.ts
+### Why Vehicle Movement Is Not the Parallel Target
 
-// Sequential: all candidates × all strategies in one thread
-for (let iter = 0; iter < iterationCount; iter++) {
-  runSequential(tasks, this.graph.nodesMap, slimEdges);
-  onProgress(Math.round(((iter + 1) / iterationCount) * 50));
-}
+Moving each vehicle is a lightweight operation: read edge ID, advance progress by `speed/edgeLength`, interpolate position. For 500 vehicles this takes ~0.1–0.5 ms sequentially. Sending this data across worker IPC boundaries adds **more overhead than the computation saves**. SPERTS measures and displays this honestly in the Live Diagnostics tab of the Analysis Lab — parallel mode is often *slower* for vehicle updates, and that is intentional and expected.
 
-// Parallel: candidates split across WORKER_COUNT persistent workers
-const workers = chunks.map(
-  () => new Worker(workerPath, { execArgv: ['--import', 'tsx'] }),
-);
-for (let iter = 0; iter < iterationCount; iter++) {
-  await Promise.all(
-    chunks.map((chunk, wi) =>
-      new Promise<void>((resolve, reject) => {
-        const w = workers[wi];
-        w.once('message', () => resolve());
-        w.once('error', reject);
-        w.postMessage({ tasks: chunk, nodes, edges: slimEdges });
-      }),
-    ),
-  );
-}
-
-// Derived metrics — all computed from real performance.now() timestamps
-speedup        = seqResult.totalMs / parResult.totalMs;
-efficiency     = speedup / WORKER_COUNT;
-improvementPct = (1 - parResult.totalMs / seqResult.totalMs) * 100;
-```
-
-### 5.5 A\* Pathfinding — Time-Based Heuristic with Min-Heap
-
-```typescript
-// src/simulation/pathfinding/aStar.ts
-export function aStar(nodes, adjacency, startId, goalId): PathResult {
-  const heuristic = (id: string): number => {
-    const node = nodes.get(id);
-    // Admissible: straight-line distance at 60 kph (never overestimates)
-    return (haversineM(node.position, goal.position) / 1000 / 60) * 3600;
-  };
-
-  const gScore = new Map([[startId, 0]]);
-  const heap = new MinHeap();
-  heap.push(heuristic(startId), startId);
-
-  while (heap.size > 0) {
-    const current = heap.pop();
-    if (current === goalId) return buildPath(...);
-
-    for (const edge of adjacency.get(current) ?? []) {
-      const cost = edgeTravelCostS(edge); // Infinity if blocked
-      const tentative = gScore.get(current) + cost;
-      if (tentative < (gScore.get(edge.to) ?? Infinity)) {
-        gScore.set(edge.to, tentative);
-        heap.push(tentative + heuristic(edge.to), edge.to);
-      }
-    }
-  }
-}
-```
-
-Edge travel cost accounts for base speed, congestion multiplier, and traffic light delay:
-
-```typescript
-// src/simulation/pathfinding/roadGraph.ts
-export function edgeTravelCostS(edge: RoadEdge): number {
-  if (edge.blocked) return Infinity;
-  const baseTravelS = (edge.distanceM / 1000 / edge.baseSpeedKph) * 3600;
-  // Congestion 0 = 1×, full congestion = 4× travel time
-  return baseTravelS * (1 + edge.congestion * 3) + edge.trafficLightDelayS;
-}
-```
-
-### 5.6 WebSocket Command Handling
-
-```typescript
-// src/websocket/MessageRouter.ts
-handle(msg: ClientMessage, _ws: WebSocket): void {
-  switch (msg.type) {
-    case 'START_SIMULATION':    this.engine.start(); break;
-    case 'TRIGGER_EMERGENCY':   this.engine.triggerEmergency(); break;
-    case 'CREATE_INCIDENT':     this.engine.createManualIncident(); break;
-    case 'TOGGLE_AUTO_REROUTE': this.engine.toggleAutoReroute(); break;
-    case 'RUN_BENCHMARK':
-      void this.engine.runBenchmark(
-        Number(msg.payload?.candidateCount ?? 100),
-        Number(msg.payload?.iterationCount ?? 3),
-        msg.payload?.mode as BenchmarkMode ?? 'comparison',
-      );
-      break;
-  }
-}
-```
-
-### 5.7 SequentialExecutor — Honest Baseline Measurement
-
-```typescript
-// src/simulation/engine/SequentialExecutor.ts
-execute(vehicles, graphStates, ctx): ExecutorResult {
-  const start = performance.now();
-  const stateMap = new Map(graphStates.map((s) => [s.id, s]));
-
-  const results = vehicles.map((v) => {
-    const state = stateMap.get(v.id);
-    return moveVehicleOnGraph(v, state, ctx.edgesMap, ctx.adjacency);
-  });
-
-  return {
-    vehicles: results.map((r) => r.vehicle),
-    graphStates: results.map((r) => r.state),
-    durationMs: performance.now() - start, // real measured cost
-  };
-}
-```
+The correct parallel target is route optimization: heavy, independent, CPU-bound A\* searches.
 
 ---
 
-## 7. Why Parallel Programming Helps Here
+## 5. Parallel Concepts Used
 
-### Vehicle Movement: Wrong Target
+| Concept | Implementation in SPERTS |
+|---|---|
+| **Task parallelism** | 4 worker threads each handle a subset of route candidate evaluations |
+| **Data partitioning** | Total A\* task batch is split evenly across workers; each worker operates on its own chunk |
+| **Worker thread pool** | `HeavyDispatchWorkerPool` — workers are spawned once, graph cached, reused for the full scenario |
+| **Persistent worker state** | Workers pre-build adjacency maps per strategy at init; no rebuild per request |
+| **Sequential vs parallel benchmarking** | Dedicated benchmark runner measures wall-clock time for both approaches on identical workloads |
+| **Real measured timings** | All compute times use `performance.now()` — never estimated |
+| **Speedup factor** | `speedup = seqTime / parTime` — displayed in both the Dispatcher Comparison and Analysis Lab |
+| **Parallel efficiency** | `efficiency = speedup / workerCount` — shown in benchmark results |
+| **Synchronization (semaphore)** | Intersections are modelled as critical sections; vehicles acquire permits before entering; blocked count tracked each tick |
+| **Producer-consumer queue** | Emergency dispatch requests are enqueued by the UI (producer) and consumed by the engine tick loop (consumer) |
+| **IPC overhead** | Honestly measured and displayed: vehicle movement overhead is higher in parallel because IPC cost exceeds compute savings |
 
-Each vehicle tick updates a position by computing `deltaProgress = speedMps / edgeDistanceM` and calling `interpolateEdge()`. For 50 vehicles, this takes < 0.05 ms in a single thread. IPC alone (serializing vehicle arrays, posting to worker, deserializing) costs 10–50 ms. The parallel overhead is 200–1000× the actual work. The live tick cost panel displays both timings honestly and notes: *"IPC overhead dominates in parallel mode."*
-
-### Route Optimization: Correct Target
-
-A* on central Tirana's OSM graph (~5,000 nodes, ~12,000 edges) takes 10–100 ms per call depending on path length. Four strategies × 100 candidate pairs = 400 A* calls ≈ 4–40 seconds sequentially. Distributing across 4 workers reduces this to ~1–10 seconds — a measured 2–4× speedup, reflected accurately in the benchmark panel.
-
-The key properties that make this workload parallel-friendly:
-
-1. **Compute-bound** — A* is pure CPU work with no I/O
-2. **No shared mutable state** — each A* call operates on its own graph copy
-3. **Embarrassingly parallel** — tasks are fully independent
-4. **Sufficient granularity** — each task is large enough that IPC overhead is a small fraction of work time
-
-### Benchmark Panel as Primary Proof
-
-The "Live Tick Cost" chart shows vehicle movement — a deliberately bad parallel workload that demonstrates the concept of IPC overhead. The "Primary Parallel Benchmark" panel shows route optimization, where parallelism genuinely helps. Both measurements come from `performance.now()` with no synthetic augmentation.
+> **WebSocket** is not parallelism. It is a real-time communication channel between the simulation server and the browser dashboard. The server runs on Node.js and the frontend runs in the browser as separate processes communicating over a single connection.
 
 ---
 
-## 8. How the Simulation Works
-
-### Full Lifecycle
+## 6. Architecture
 
 ```
-1. Server starts
-   └─ SimulationEngine constructor
-      ├─ loadRoadGraph() → OSM cache or mock graph
-      ├─ generateFleet(vehicleCount, graph) → initial vehicle positions
-      ├─ new EmergencyRouter(nodes, edges)
-      ├─ new IncidentManager(nodes, edges, startId, goalId)
-      ├─ new ParallelExecutor() → spawns 4 vehicleWorker threads
-      └─ new BenchmarkRunner(graph)
-
-2. Client connects via WebSocket
-   └─ Receives initial SIMULATION_SNAPSHOT
-
-3. START_SIMULATION command received
-   └─ setInterval fires every (1000/speed) ms → tick_()
-
-4. Each tick:
-   ├─ Sequential: moveVehicleOnGraph() for all vehicles in main thread
-   ├─ Parallel:   dispatch chunks to vehicleWorkers, await Promise.all
-   ├─ evolveCongestion() → sinusoidal updates on edge weights
-   ├─ incidentManager.tick() → expire old incidents, maybe spawn new
-   ├─ router.applyIncidentOverrides() → merge incident overrides onto edges
-   ├─ advanceAmbulance() → move ambulance if dispatch is active
-   ├─ computeRouteQualityScore() → ratio of initial cost to current cost
-   ├─ applyTrafficLightPriority() → green lights near emergency route
-   └─ emit() → broadcast SIMULATION_SNAPSHOT to all WS clients
-
-5. TRIGGER_EMERGENCY command received
-   └─ dispatchState = { status: 'routing', ... }
-      └─ runEmergencyRouting() async
-         ├─ Sequential: one A* with standard strategy
-         ├─ Parallel: 4 workers × 4 strategies → best result selected
-         └─ dispatchState.status = 'active', routeEdgeIds populated
-
-6. Ambulance moves (every tick while status === 'active'):
-   ├─ delta = AMBULANCE_TICK_S / edgeTravelCostS(currentEdge)
-   ├─ progressOnEdge += delta  (carries over across edges when delta > 1)
-   ├─ interpolateEdge() → update ev-001 marker position on map
-   ├─ checkRouteBlockage() → scan 5 edges ahead for blocked flag
-   │    └─ If blocked: status = 'rerouting', rerouteAmbulanceFrom(currentNode)
-   └─ updateDispatchMetrics() → recompute live ETA and distance remaining
-
-7. CREATE_INCIDENT command received
-   └─ incidentManager.createManual(tick, dispatchState.routeEdgeIds)
-      ├─ Prefers to spawn on an active route edge
-      └─ Applies congestion boost or edge block to affected edges
-
-8. Blocked edge detected → checkRouteBlockage() in advanceAmbulance()
-   └─ rerouteAmbulanceFrom(currentNodeId)
-      ├─ Runs A* from current ambulance node (not original start)
-      ├─ New routeEdgeIds replace old ones
-      └─ Route polyline updates on next snapshot broadcast
-
-9. Ambulance reaches goalNode
-   └─ onAmbulanceArrived()
-      ├─ status = 'completed'
-      ├─ totalResponseTimeS recorded
-      └─ emergencyActive = false
-
-10. RUN_BENCHMARK command received
-    └─ runBenchmark(candidateCount, iterationCount, mode)
-       ├─ Pauses tick loop
-       ├─ generateTasks() → N deterministic (from, to) pairs via mulberry32 RNG
-       ├─ Sequential phase: N×4 A* in main thread, timing captured
-       ├─ Parallel phase: N/4 tasks per worker × 4 workers, timing captured
-       ├─ Derives speedup, efficiency, improvement %
-       └─ Resumes tick loop, emits FullBenchmarkResult in next snapshot
+┌─────────────────────────────────────────┐
+│         Browser (Next.js Dashboard)     │
+│   Map · Controls · Metrics · Charts     │
+└────────────────┬────────────────────────┘
+                 │ WebSocket (ws://localhost:3001)
+                 │ Live snapshots every tick
+┌────────────────▼────────────────────────┐
+│         Node.js Simulation Server       │
+│         server/index.ts                 │
+└────────────────┬────────────────────────┘
+                 │
+┌────────────────▼────────────────────────┐
+│         SimulationEngine                │
+│  · Tick loop (setInterval)              │
+│  · Vehicle movement                     │
+│  · Congestion update (vehicle density)  │
+│  · Incident management                  │
+│  · Emergency routing                    │
+│  · Rerouting logic                      │
+│  · Traffic light priority               │
+└──────────┬──────────────┬───────────────┘
+           │              │
+┌──────────▼──────┐  ┌────▼────────────────┐
+│SequentialExec.  │  │  ParallelExecutor   │
+│ main thread     │  │  worker_threads     │
+│ vehicles / A*   │  │  A* route batches   │
+└─────────────────┘  └─────────────────────┘
+           │
+┌──────────▼────────────────────────────────┐
+│  A* Pathfinding · Road Graph (OSM)        │
+│  IncidentManager · SemaphoreManager       │
+│  EmergencyRouter · BenchmarkRunner        │
+└───────────────────────────────────────────┘
 ```
+
+### Key Directories
+
+| Directory | Purpose |
+|---|---|
+| `app/` | Next.js App Router entry point and layout |
+| `src/components/` | React components: dashboard, map, analytics, controls, UI |
+| `src/simulation/engine/` | `SimulationEngine.ts` — the main tick loop and all simulation logic |
+| `src/simulation/pathfinding/` | A\* implementation, road graph types, edge cost function |
+| `src/simulation/emergency/` | `EmergencyRouter` — wraps A\* with strategy selection and parallel execution |
+| `src/simulation/incident/` | `IncidentManager` — incident lifecycle and placement |
+| `src/simulation/workers/` | `HeavyDispatchWorkerPool` — manages 4 persistent worker threads |
+| `src/workers/` | `heavyDispatchWorker.ts` — the actual worker thread code run by Node.js |
+| `src/websocket/` | `WebSocketServer`, `MessageRouter`, `BroadcastManager` |
+| `src/store/` | Zustand stores (emergencyStore, vehicleStore, metricsStore, etc.) |
+| `src/services/` | `websocketService.ts` — applies incoming snapshots to stores |
+| `scripts/` | `generateRoads.ts` — fetches OSM road data and caches it |
+| `data/roads/` | `tirana-road-graph.json` — cached OSM graph (9,488 nodes, 17,388 edges) |
 
 ---
 
-## 9. Installation
+## 7. Installation
 
-### Prerequisites
-
-- Node.js 20 or later
-- npm 10 or later
-- Internet access for the initial road data fetch (optional — fallback graph is included)
-
-### Steps
+**Prerequisites:** Node.js 18+ and npm.
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/artjolzaimi/smart-parallel-emergency-traffic-simulator
+# Clone the repository
+git clone <repository-url>
 cd smart-parallel-emergency-traffic-simulator
 
-# 2. Install dependencies
+# Install dependencies
 npm install
 
-# 3. (Optional but recommended) Fetch the OSM road graph for Tirana
-#    Calls the Overpass API and saves data/roads/tirana-road-graph.json
-#    The app works without this step — it falls back to a built-in mock graph
+# Fetch and cache the OpenStreetMap road graph
 npm run generate:roads
-
-# 4. Start the full application (Next.js dev server + WebSocket server)
-npm run dev:all
 ```
 
-### About `generate:roads`
+The `generate:roads` script calls the Overpass API, downloads all road edges for central Tirana, and writes `data/roads/tirana-road-graph.json`. This file is required for realistic congestion and routing behaviour.
 
-The script `scripts/generateRoads.ts` queries the Overpass API for all drivable ways (primary, secondary, tertiary, residential, service) within a bounding box covering central Tirana (`41.308°N–41.348°N, 19.795°E–19.845°E`). It converts raw OSM data into the internal `{ nodes, edges, adjacency }` graph format and writes it to `data/roads/tirana-road-graph.json`.
-
-The script retries three Overpass mirrors in sequence. If all fail (e.g., offline or rate-limited), it exits with an explanatory message and the app continues using the mock graph.
-
-**When to re-run `generate:roads`:**
-- After changing the bounding box in `scripts/generateRoads.ts`
-- When you want fresher OSM data
-- It does **not** need to be re-run after any code changes
+> **If `generate:roads` fails** (network unavailable, API timeout): the simulation falls back to a minimal 18-node mock graph. The demo still runs, but benchmark speedups will appear trivial because A\* on 18 nodes takes ~0.01 ms — IPC overhead dominates at that scale. Run `generate:roads` when possible.
 
 ---
 
-## 10. Running the Project
+## 8. Running the Project
 
 ```bash
 npm run dev:all
 ```
 
-This runs two processes concurrently via `concurrently`:
-- **Next.js dev server** — `http://localhost:3000`
-- **WebSocket simulation server** — `ws://localhost:3001`
+This starts both servers concurrently:
 
-The simulation WebSocket server is a standalone Node.js process (`src/websocket/index.ts`) that runs the `SimulationEngine` and broadcasts snapshots. The Next.js dev server serves the React frontend that connects to it.
-
-No environment variables are required. The WebSocket URL is hardcoded in `src/services/websocketService.ts`.
-
----
-
-## 11. Demo Workflow
-
-Follow these steps to demonstrate all parallel programming features:
-
-**Step 1 — Open the app** at `http://localhost:3000`. The map centers on Tirana between Grand Park and QSUT Hospital. The ambulance marker (AMB-01) sits at the Grand Park dispatch origin (`41.3104°N, 19.8085°E`).
-
-**Step 2 — Set vehicle count** using the slider in the control panel. Try 50 for a fast demo or 300 to stress the parallel executor.
-
-**Step 3 — Choose execution mode** — Sequential or Parallel. This mode affects both vehicle tick processing and emergency route computation.
-
-**Step 4 — Start the simulation** by clicking Start. Vehicles begin moving along OSM road edges. The tick rate and congestion level update live in the right panel.
-
-**Step 5 — Trigger Emergency**. The ambulance route computes immediately. In parallel mode, 4 strategies are evaluated simultaneously and the best is selected. The dashed route polyline appears on the map. The ambulance begins moving toward the hospital edge-by-edge, with live ETA and distance remaining visible in the Emergency Dispatch panel.
-
-**Step 6 — Create an Incident**. With an active emergency, the incident will prefer to spawn on the ambulance's planned route, increasing congestion or blocking an edge outright.
-
-**Step 7 — Watch the reroute**. If the incident blocks a route edge, the engine detects it within one tick (via the 5-edge lookahead), computes a new path from the ambulance's current position, and updates the route polyline. The dispatch panel shows "Rerouting…" then "En Route", and the reroute counter increments.
-
-**Step 8 — Wait for arrival**. When the ambulance reaches QSUT Hospital, the dispatch panel shows "Arrived" with the total response time.
-
-**Step 9 — Run the Benchmark**. Open the Primary Parallel Benchmark panel. Select 200 candidates and Standard (3 iterations). Click Comparison. Watch the progress bar. When complete, read:
-- Sequential throughput (candidates/sec)
-- Parallel throughput (candidates/sec)
-- Speedup factor
-- Efficiency (speedup / worker count)
-- Improvement percentage
-
-**Step 10 — Interpret results**. Compare the "Live Tick Cost" chart (vehicle movement — parallel is slower due to IPC) with the benchmark (route optimization — parallel is faster due to genuine CPU parallelism). This contrast demonstrates the central engineering lesson of the project.
-
----
-
-## 12. Benchmark Explanation
-
-### Key Terms
-
-| Term | Meaning |
-|---|---|
-| **Candidate count** | Number of random (origin, destination) pairs generated for the workload. Each pair requires 4 A* searches (one per strategy). 100 candidates = 400 A* calls per iteration. |
-| **Iteration count** | How many times the full workload is repeated. Higher values reduce timing noise. Results are summed over all iterations. |
-| **Throughput** | Candidates processed per second: `(candidateCount × iterationCount × 1000) / totalMs`. Higher is better. |
-| **Speedup** | `seqTotalMs / parTotalMs`. A speedup of 2.5× means parallel finished in 40% of the sequential time. |
-| **Efficiency** | `speedup / workerCount`. Perfect efficiency = 1.0. Values below 1.0 indicate IPC overhead or load imbalance. |
-| **Improvement %** | `(1 − parMs / seqMs) × 100`. Percentage of sequential time saved. |
-
-### Why Parallel Overhead Appears in Live Tick Cost
-
-Vehicle position updates take ~0.01–0.05 ms per tick for 50 vehicles. Serializing the vehicle array for `postMessage`, waiting for worker responses, and deserializing takes 10–50 ms. The parallel tick cost appears higher because the overhead is real and accurately measured. This is an intentional demonstration: parallelism only pays when compute time exceeds communication overhead.
-
-### Why Benchmark is the Primary Proof
-
-The benchmark workload (A* × 4 strategies × N candidates) is compute-bound with no shared state. With 200 candidates and 3 iterations, the sequential phase evaluates 2,400 A* calls in sequence; the parallel phase distributes them across 4 cores simultaneously. The speedup measured is genuine — no mock timings, no synthetic adjustments.
-
-All values derive from `performance.now()` timestamps captured immediately before and after each work phase.
-
----
-
-## 13. Parallel vs Sequential Dispatcher — Correct Framing
-
-### Why comparing physical ambulance speed is wrong
-
-A common misconception: "the parallel ambulance should arrive faster because parallel is faster."
-
-**This is wrong.** Parallel programming affects computation speed, not physical driving speed. An ambulance travels at whatever speed its vehicle can sustain on the road network. No amount of parallelism in the dispatch software makes the ambulance drive faster between two points.
-
-**What parallelism actually improves:**
-
-| What parallelism changes | What it does not change |
-|---|---|
-| Route computation time | Physical ambulance speed |
-| Rerouting reaction speed | Distance between dispatch and hospital |
-| Number of strategies evaluated | Road network topology |
-| Quality of route selected | Traffic laws and physics |
-
-The ambulance benefits from parallelism indirectly: because the dispatch system finishes computing sooner, the ambulance starts moving sooner. Under a heavy routing workload (many candidate evaluations, multiple strategies), this delay is meaningful.
-
----
-
-### Normal Mode: Dispatcher Comparison Panel
-
-When you click **Trigger Emergency** (single ambulance mode):
-
-1. Both dispatchers compute routes for the **same ambulance**:
-   - **Sequential dispatcher**: runs one A* with the standard strategy in the main thread
-   - **Parallel dispatcher**: spawns 4 workers, each evaluating one strategy simultaneously
-2. The ambulance follows the parallel route (it evaluates more strategies → usually better)
-3. The **Dispatcher Comparison** panel appears in the right sidebar showing:
-   - Both compute times (real `performance.now()` measurements)
-   - Route cost (ETA) for each dispatcher's recommended route
-   - Speedup factor and winner
-   - After an incident: rerouting compute times for both dispatchers
-
-This is honest: sometimes sequential is faster (small graphs, low overhead), sometimes parallel wins. Both results are shown as-is.
-
----
-
-### Parallel Advantage Scenario: Two Ambulances
-
-Click **Run Parallel Advantage Scenario** to see the computation delay effect visually.
-
-#### How it works
-
-1. Both ambulances start at the same origin simultaneously
-2. Each waits at the station while its dispatcher computes the route using **heavy workload routing**:
-   - **16 A* evaluations** (4 strategies × 4 variant weight passes)
-   - Sequential: all 16 run one-by-one in the main thread
-   - Parallel: 4 workers run simultaneously, each doing 4 A* evaluations
-3. PAR typically finishes computing first → PAR ambulance starts moving sooner
-4. Both ambulances drive at **exactly the same physical speed** after departure
-5. Any progress advantage for PAR comes **only** from earlier dispatch, not faster driving
-
-#### Computation delay scaling
-
-To make the dispatch delay effect visible in the animation:
-
-```
-5 ms of route computation time = 1 simulation tick of ambulance wait
-```
-
-This scale factor is transparent and explained in the UI. Displayed compute times are real `performance.now()` values — only the translation to animation ticks uses the scale factor.
-
-#### What the comparison panel shows
-
-During the scenario, the right sidebar displays:
-
-| Metric | Description |
-|---|---|
-| Compute time | Real measured routing time (ms) for each dispatcher |
-| Dispatch delay | How many ticks each ambulance waited at the station |
-| Route progress % | How far along the route each ambulance is |
-| Waiting (x/y ticks) | Countdown showing ambulance waiting before departure |
-| Reroutes | How many times each dispatcher had to recalculate |
-| Total time | Full response time from dispatch to hospital arrival |
-| Speedup factor | `seqMs / parMs` — real compute speedup |
-
-#### Why both ambulances use the same driving speed
-
-The engine uses `AMBULANCE_TICK_S = 10` (10 simulated seconds per tick) for **both** ambulances. The only source of difference between SEQ and PAR progress is:
-
-1. **Initial dispatch delay** — proportional to route computation time
-2. **Rerouting delay** — when an incident forces rerouting, the ambulance pauses while its dispatcher recalculates
-
-The simulation does not fake any advantage. If sequential happens to compute faster on a small graph (due to low IPC overhead), sequential wins — this is shown honestly.
-
----
-
-### What the parallel dispatcher does
-
-The parallel dispatcher spawns 4 `worker_threads` simultaneously, each evaluating one strategy:
-
-| Worker | Strategy | Description |
+| Server | URL | Role |
 |---|---|---|
-| W1 | `standard` | Standard time-based edge weights |
-| W2 | `avoid-congestion` | Edge congestion doubled — prefers open roads |
-| W3 | `avoid-blocked` | Filters out blocked edges entirely before searching |
-| W4 | `prefer-speed` | Ignores traffic light delays and halves congestion weight |
+| Next.js frontend | http://localhost:3000 | Dashboard UI |
+| WebSocket backend | ws://localhost:3001 | Simulation engine |
 
-In the heavy workload scenario, each worker runs **4 variant passes** (slightly varied edge cost weights), for a total of 16 A* evaluations split across 4 threads. The best result wins.
-
-All numbers displayed in the UI come from `performance.now()` wall-clock measurements. Nothing is faked or estimated.
+The frontend auto-connects to the WebSocket server on load. The connection status is shown in the top-right corner of the header.
 
 ---
 
-## 15. Folder Structure
+## 9. Demo Guide: How to See the Expected Results
 
-```
-smart-parallel-emergency-traffic-simulator/
-│
-├── app/                             # Next.js App Router
-│   ├── layout.tsx
-│   └── page.tsx                     # Main page — mounts simulation UI
-│
-├── src/
-│   ├── components/                  # React UI (render only, no simulation logic)
-│   │   ├── analytics/
-│   │   │   ├── BenchmarkPanel/      # Primary parallel benchmark UI + controls
-│   │   │   ├── BenchmarkChart/      # Recharts throughput comparison bar chart
-│   │   │   ├── EmergencyMetrics/    # Live dispatch status, ETA, distance, reroutes
-│   │   │   ├── EmergencyStatusPanel/# Route quality bar, incident count, toggles
-│   │   │   ├── SyncPanel/           # Semaphore + queue metrics card
-│   │   │   ├── MetricsPanel/        # Right sidebar — all analytics panels composed
-│   │   │   └── PerformanceChart/    # Live tick cost chart (vehicle movement)
-│   │   ├── map/
-│   │   │   ├── MapClient/           # Dynamic Leaflet map (SSR disabled)
-│   │   │   ├── VehicleLayer/        # Vehicle marker rendering
-│   │   │   └── RouteLayer/          # Emergency route polyline rendering
-│   │   └── ui/
-│   │       ├── ControlPanel/        # Start/pause/reset, vehicle count, mode toggle
-│   │       ├── HowItWorksModal/     # Parallel concepts explainer
-│   │       └── SimulationControls/  # Emergency, incident, reroute, priority buttons
-│   │
-│   ├── simulation/                  # All simulation logic — zero React imports
-│   │   ├── engine/
-│   │   │   ├── SimulationEngine.ts  # Master loop, ambulance lifecycle, snapshot
-│   │   │   ├── SequentialExecutor.ts# Single-thread vehicle tick baseline
-│   │   │   └── ParallelExecutor.ts  # 4-worker vehicle tick
-│   │   ├── pathfinding/
-│   │   │   ├── aStar.ts             # A* with min-heap, time-based heuristic
-│   │   │   ├── roadGraph.ts         # RoadNode/RoadEdge types, edgeTravelCostS
-│   │   │   ├── loadRoadGraph.ts     # OSM cache loader, nearest-node override
-│   │   │   └── tiranaRoadGraph.ts   # Hand-crafted mock graph (18 nodes, 52 edges)
-│   │   ├── emergency/
-│   │   │   └── EmergencyRouter.ts   # Multi-strategy routing, parallel workers
-│   │   ├── benchmark/
-│   │   │   └── BenchmarkRunner.ts   # Route optimization benchmark, real timings
-│   │   ├── incident/
-│   │   │   └── IncidentManager.ts   # Incident lifecycle, route-preferring spawn
-│   │   ├── vehicles/
-│   │   │   ├── VehicleMovement.ts   # moveVehicleOnGraph, interpolateEdge
-│   │   │   └── VehicleGraphState.ts # Per-vehicle (edgeId, progress) state
-│   │   ├── synchronization/         # Classical synchronization primitives
-│   │   │   ├── IntersectionSemaphoreManager.ts  # Counting semaphore / critical section
-│   │   │   └── EmergencyRequestQueue.ts         # Producer-consumer FIFO queue
-│   │   ├── traffic/                 # Traffic light phase logic
-│   │   └── utils/
-│   │       ├── fleetGenerator.ts    # Deterministic fleet placement on graph edges
-│   │       └── geo.ts               # haversineM distance
-│   │
-│   ├── workers/                     # Worker thread entry points
-│   │   ├── vehicleWorker.ts         # Vehicle chunk processing per tick
-│   │   ├── routingWorker.ts         # One A* strategy (EmergencyRouter)
-│   │   └── routeScoringWorker.ts    # All strategies on candidate chunk (benchmark)
-│   │
-│   ├── websocket/                   # WebSocket server (Node.js, not browser)
-│   │   ├── WebSocketServer.ts       # ws.Server, connection management
-│   │   ├── MessageRouter.ts         # Client message → engine method dispatch
-│   │   └── BroadcastManager.ts      # Fan-out snapshot to all connected clients
-│   │
-│   ├── services/
-│   │   └── websocketService.ts      # Browser WS client, snapshot → Zustand stores
-│   │
-│   ├── store/                       # Zustand v5 stores — reactive state, no logic
-│   │   ├── vehicleStore.ts
-│   │   ├── emergencyStore.ts        # Includes dispatchState for ambulance tracking
-│   │   ├── metricsStore.ts
-│   │   ├── simulationStore.ts
-│   │   ├── benchmarkStore.ts
-│   │   └── wsStore.ts
-│   │
-│   └── types/                       # Shared TypeScript interfaces
-│       ├── emergency.ts             # RoutingResult, DispatchState, RouteStrategy
-│       ├── snapshot.ts              # SimulationSnapshot — full broadcast payload
-│       ├── benchmark.ts             # BenchmarkRunResult, FullBenchmarkResult
-│       ├── map.ts                   # VehicleMarkerData, EmergencyRouteData
-│       ├── metrics.ts               # PerformanceMetrics, BenchmarkComparison
-│       └── incident.ts              # Incident type definitions
-│
-├── data/
-│   ├── roads/
-│   │   └── tirana-road-graph.json   # Cached OSM graph (generated by generate:roads)
-│   └── scenarios/
-│       └── tiranaMockData.ts        # Pre-WS placeholder: vehicles, route, lights
-│
-├── scripts/
-│   └── generateRoads.ts             # Overpass API fetcher → tirana-road-graph.json
-│
-└── package.json
-```
+### A. Basic Simulation Test
+
+**Goal:** Verify the simulation runs and vehicles move on real roads.
+
+1. Open `http://localhost:3000`
+2. In the **left sidebar**, set **Vehicles** to `100`
+3. Set **Pattern** to `Morning Rush`
+4. Set **Speed** to `3×`
+5. Click **Start**
+6. Observe ~100 vehicle dots moving along real Tirana road edges on the map
+7. The right panel shows **Congestion %** — this is the real average edge congestion computed from vehicle positions
+8. Increase vehicles to `500` — congestion percentage should rise visibly
+9. Switch to **Night — Low** pattern — congestion should drop significantly (density multiplier drops from 1.6× to 0.25×)
+
+**Expected:** Congestion % changes with vehicle count and traffic pattern. These values drive A\* edge costs.
 
 ---
 
-## 14. Technologies Used
+### B. Normal Emergency Routing Test
 
-| Technology | Version | Role |
+**Goal:** See the ambulance dispatch, route comparison, and rerouting.
+
+1. With simulation running, click **Trigger Emergency**
+2. A blue route line appears on the map from the lake park to QSUT Hospital
+3. The **Mission Status** card on the right updates: status, ETA, distance, compute time
+4. The **Dispatcher Comparison** card appears showing SEQ vs PAR compute times side by side
+5. Click **Create Incident**
+   - An incident (orange/red marker) appears 3–9 edges ahead of the ambulance's current position on the route
+   - The route may change (polyline updates on map)
+   - **Reroutes** count increments in Mission Status
+   - **ETA** updates to reflect the new route
+6. Check the console (`npm run dev:websocket` terminal) for logs:
+   ```
+   [Traffic] tick=45 vehicles=100 avgCongestion=18.3% scenario=morning-rush
+   [Routing] Reroute triggered — reason=blocked oldCostS=312.4 currentCostS=Infinity
+   [Routing] ETA changed after reroute: 312.4s → 287.1s strategy=avoid-blocked
+   ```
+
+**Expected:** One ambulance dispatched; both SEQ and PAR compute times shown; incident on active route triggers reroute.
+
+---
+
+### C. Visual Parallel Demo Test
+
+**Goal:** Visually see the parallel advantage — earlier dispatch, same driving speed.
+
+1. Click **Reset** to clear any active emergency
+2. In the sidebar under **Visual Parallel Demo**, select workload **Heavy** (4,000 A\* evals)
+3. Click **Run Visual Parallel Demo**
+4. Watch the map — **two ambulances** appear:
+   - 🔵 **SEQ** (blue) — sequential dispatcher, evaluates all A\* calls in one thread
+   - 🟦 **PAR** (cyan) — parallel dispatcher, splits evaluations across 4 worker threads
+5. Both ambulances wait at the start position while their dispatcher computes
+6. PAR should start moving **earlier** — because the parallel dispatcher finishes computing first
+7. Both ambulances drive at **identical speed** once moving
+8. The **Parallel Advantage Summary** card on the right shows:
+   - SEQ compute time (e.g., `4,200 ms`)
+   - PAR compute time (e.g., `1,050 ms`)
+   - Speedup factor (e.g., `4.0×`)
+   - Dispatch delay difference (e.g., `PAR started 105 ticks earlier`)
+   - Route progress bars showing the head start
+
+9. After both arrive, the results **persist** on screen — click **Reset** to clear
+
+> Note: the speedup depends on your hardware. On machines with fewer CPU cores, the speedup may be smaller. This is expected and reflects real parallel programming behaviour.
+
+**Expected:** PAR dispatches before SEQ, same physical driving speed, real measured compute times.
+
+---
+
+### D. Benchmark / Analysis Lab Test
+
+**Goal:** Get the primary, repeatable proof of parallel speedup.
+
+1. Click **Open Analysis Lab** (right panel, bottom)
+2. The modal opens on the **Benchmark Lab** tab
+3. Under **Route candidates**, select `200`
+4. Under **Iterations**, select `Standard (3)`
+5. Click **Run Comparison**
+6. Wait for both sequential and parallel runs to complete
+7. Results show:
+   - Sequential: total ms, avg per iteration, candidates/sec
+   - Parallel (4 workers): same metrics
+   - **Speedup**: `seqTime / parTime` (typically 2–4× on a modern laptop)
+   - **Efficiency**: `speedup / 4` (100% efficiency = perfect linear scaling)
+   - A bar chart comparing throughput
+
+8. Switch to the **Live Diagnostics** tab — observe the `Live Tick Cost` bars. In parallel mode, vehicle tick cost is often *higher* than sequential (IPC overhead). This is honest and expected — see Section 11.
+
+**Expected:** Parallel benchmark faster than sequential at 200+ candidates. The larger the candidate count, the stronger the speedup as fixed IPC overhead becomes proportionally smaller.
+
+---
+
+### E. Scenario / Traffic Pattern Test
+
+**Goal:** Confirm traffic patterns affect real routing and congestion.
+
+| Step | Morning Rush | Night — Low |
 |---|---|---|
-| **Next.js** | 16.2.6 | Full-stack framework. App Router for the frontend. Standalone Node.js process for the WebSocket simulation server. |
-| **TypeScript** | 5.x | Strict typing across all simulation logic, workers, stores, and components. Shared type definitions across the Node.js/browser boundary. |
-| **Tailwind CSS** | 4.x | Utility-first styling. Dark theme throughout. |
-| **React Leaflet** | 5.x + Leaflet 1.9 | Interactive map with OpenStreetMap tile layers. Renders vehicle markers, route polylines, and incident markers. |
-| **OpenStreetMap / Overpass API** | — | Source of real road geometry for Tirana. Queried by `scripts/generateRoads.ts` via HTTP POST. |
-| **ws** | 8.20.1 | WebSocket server. Streams simulation snapshots from Node.js to the browser at each tick. |
-| **Node.js worker_threads** | Built-in | True OS threads for parallel vehicle processing, route strategy evaluation, and benchmark workloads. |
-| **tsx** | 4.x | TypeScript execution hook for worker thread files. Allows type-safe workers without a separate compile step. |
-| **Zustand** | 5.x | Lightweight reactive state management. Stores are thin bridges between WebSocket service and React components — no simulation logic inside. |
-| **Recharts** | 3.x | Bar charts in the benchmark panel and performance chart. |
-| **lucide-react** | Latest | Icon set used throughout the UI panels. |
-| **concurrently** | 9.x | Runs Next.js dev server and WebSocket simulation server in parallel with `npm run dev:all`. |
+| Start simulation, 200 vehicles | High congestion | Low congestion |
+| Congestion % metric | ~30–50% | ~3–8% |
+| Trigger Emergency, note ETA | Higher ETA | Lower ETA |
+| Incident probability | Incidents appear frequently (auto) | Incidents rare |
+| Rerouting sensitivity | Reroutes at 15% cost increase | Reroutes at 35% cost increase |
+
+1. Start simulation with `200` vehicles and **Morning Rush**
+2. Note the **Congestion %** in the right panel
+3. Trigger Emergency and note the **ETA** in Mission Status
+4. Switch to **Night — Low** while running (congestion drops instantly)
+5. Note that ETA shortens because edge costs are lower
+6. Switch to **Emergency Mode** — auto-dispatch triggers if simulation is running; incidents appear more frequently
 
 ---
 
-## 16. Academic Relevance
+## 10. Expected Results Summary
 
-This project implements and measures several core parallel programming concepts in a realistic applied context.
-
-### Shared-Memory Parallelism
-
-Node.js worker threads share no heap by default — data is serialized via `postMessage`. The programming model mirrors shared-memory parallelism in that workers receive read-only copies of graph data and operate independently. The project demonstrates why immutability is essential for parallel correctness: if workers mutated the shared edge array, race conditions would corrupt cost calculations.
-
-### Task Parallelism vs Data Parallelism
-
-- **Data parallelism**: `ParallelExecutor` applies the same function (`moveVehicleOnGraph`) to independent data partitions — the vehicle array split evenly across 4 workers.
-- **Task parallelism**: `EmergencyRouter` dispatches different tasks (different A* strategy computations) to different workers. Each worker applies a different weight transformation and searches independently.
-
-The benchmark uses both simultaneously: different candidate chunks (data partitioning) × all 4 strategies per chunk (task diversity).
-
-### Performance Measurement and Amdahl's Law
-
-All measurements use `performance.now()` with sub-millisecond precision. Workers are pre-warmed (spawned once per benchmark phase) to separate startup overhead from steady-state throughput. The resulting efficiency values (typically 0.5–0.8 for 4 workers) demonstrate Amdahl's Law empirically — not all of the sequential work is parallelisable, and the sequential bottlenecks (task generation, result merging, IPC) limit the achievable speedup.
-
-### Real-World Application Domain
-
-Emergency response time optimization is an active area of research in smart city infrastructure. The simulation model — dynamic edge weights, multi-criteria route selection, incident-triggered re-planning, and priority signal control — mirrors real Computer-Aided Dispatch (CAD) systems. Parallel processing of candidate routes is directly applicable to scenarios where a dispatch centre must evaluate paths for multiple emergency vehicles simultaneously under time pressure.
-
----
-
-## 17. Future Improvements
-
-| Improvement | Description |
+| Test | What You Should See |
 |---|---|
-| **Real traffic API** | Integrate live traffic data (e.g., HERE or TomTom) to update edge congestion from real sensor feeds instead of the current sinusoidal model. |
-| **Multi-ambulance dispatch** | Support multiple simultaneous emergency vehicles with independent dispatch states and route tracking. |
-| **MPI-style distributed zones** | Partition the city into geographic zones processed by separate Node.js processes communicating via IPC, simulating distributed-memory parallelism. |
-| **GPU route scoring** | Evaluate hundreds of thousands of candidate routes using WebGPU compute shaders for massive throughput benchmarks. |
-| **Machine learning ETA prediction** | Train a model on historical route costs and traffic patterns to predict ETA more accurately than the current A* cost sum. |
-| **Larger city support** | Extend the Overpass query to cover full Tirana or other cities. Test scalability with 50,000+ node graphs. |
-| **Real emergency dispatch data** | Integrate with open datasets from emergency services to validate simulation accuracy against real-world response times. |
-| **Route visualization improvements** | Animate the ambulance path with turn-by-turn rendering and display the full set of evaluated strategy alternatives on the map. |
-| **WebRTC peer simulation** | Allow multiple browser clients to run independent simulation nodes, exploring peer-to-peer distributed parallel simulation models. |
+| 50 vs 500 vehicles (Morning Rush) | Congestion % rises with vehicle count; ETA increases; A\* may pick a different route |
+| Morning Rush vs Night | Night has lower congestion, faster ETA, fewer incidents |
+| Create Incident during emergency | Incident appears on active route; reroute triggers; ETA updates |
+| Visual Parallel Demo (Heavy workload) | PAR starts moving before SEQ; both arrive, but PAR arrives earlier |
+| Benchmark (200+ candidates) | Parallel is faster than sequential; speedup ≥ 1.5× on most hardware |
+| Benchmark (50 candidates) | Parallel may be slower — IPC overhead dominates at small workload size |
+| Emergency Mode pattern | Auto-emergency triggers; more frequent incident auto-spawns |
 
 ---
 
-## Notes on Metric Integrity
+## 11. Important Note About Parallel Overhead
 
-All performance numbers shown in the UI and printed in the terminal are derived from direct `performance.now()` measurements:
+Parallel programming is **not always faster**. This project demonstrates both sides honestly.
 
-- **Tick cost** in the live chart: measured from start to end of `tick_()`, separately per executor
-- **Route compute time**: `performance.now()` before and after `router.findRouteBest()`
-- **Benchmark throughput**: total measured milliseconds divided by total work completed
-- **ETA remaining**: recomputed from remaining route edges and live edge costs on every tick
+**Vehicle movement (lightweight task):**  
+Moving each vehicle takes ~0.001 ms. With 500 vehicles, the total sequential cost is ~0.5 ms. Sending vehicle data across worker IPC boundaries adds ~2–5 ms of overhead per tick. For this task, parallel mode is *slower*. This is measured and shown in the **Live Diagnostics** tab — the bar chart will show parallel tick cost ≥ sequential.
 
-No values are hardcoded, interpolated, or estimated. If a displayed number looks surprising, it reflects the actual runtime behaviour of the simulation on that machine.
+**Route optimization (heavy task):**  
+Running 1,000 A\* searches on a 9,488-node graph takes seconds sequentially. Each search is independent. With 4 workers, the same workload takes roughly ¼ the time. The fixed overhead (worker spawning, IPC, result aggregation) is a small fraction of the compute cost. For this task, parallel mode is faster — and the speedup is meaningful.
+
+The lesson: **parallelism pays off when the task is CPU-bound, independent, and large enough to amortize communication overhead.** This project was specifically designed to show that distinction clearly.
 
 ---
 
-*City road data courtesy of [OpenStreetMap](https://openstreetmap.org) contributors, available under the [ODbL license](https://opendatacommons.org/licenses/odbl/).*
+## 12. Scripts Reference
+
+| Script | Command | Description |
+|---|---|---|
+| Start dev server | `npm run dev` | Next.js frontend only (port 3000) |
+| Start WS server | `npm run dev:websocket` | Simulation backend only (port 3001) |
+| Start both | `npm run dev:all` | Frontend + backend concurrently (recommended) |
+| Production build | `npm run build` | TypeScript compile + Next.js build |
+| Fetch road graph | `npm run generate:roads` | Download OSM data and write `data/roads/tirana-road-graph.json` |
+| Lint | `npm run lint` | ESLint checks |
+
+---
+
+## 13. Technologies Used
+
+| Technology | Role |
+|---|---|
+| **Next.js 16** (App Router) | Frontend framework; serves the dashboard |
+| **TypeScript** | Type-safe code across frontend and backend |
+| **Tailwind CSS** | Utility-first styling for the compact command-center UI |
+| **React Leaflet** | Map rendering with OpenStreetMap tiles (CARTO Dark basemap) |
+| **OpenStreetMap / Overpass API** | Real road graph data for Tirana |
+| **ws** | WebSocket server library for the simulation backend |
+| **Node.js `worker_threads`** | True OS-level parallel threads for route computation |
+| **Zustand** | Lightweight client-side state management |
+| **Recharts** | Bar charts in the Analysis Lab benchmark results |
+| **concurrently** | Run Next.js and WebSocket server in one terminal |
+| **tsx** | TypeScript execution for the server and scripts |
+
+---
+
+## 14. Academic Relevance
+
+SPERTS was built as a practical demonstration of parallel programming concepts from a university Parallel Programming course:
+
+| Course Concept | Where It Appears in SPERTS |
+|---|---|
+| **Task decomposition** | A\* route evaluations are split into independent task chunks |
+| **Data partitioning** | Candidate batch divided evenly across 4 workers |
+| **Thread pool** | `HeavyDispatchWorkerPool` — persistent workers with cached state |
+| **Parallel speedup** | `S = T_seq / T_par` — measured and displayed in real time |
+| **Parallel efficiency** | `E = S / p` where `p = 4` — shown in benchmark results |
+| **Parallel overhead** | IPC serialization cost — honestly measured and visualised |
+| **Amdahl's Law** | Visible: small workloads (50 candidates) show diminishing returns; large workloads (2,000) show near-linear speedup |
+| **Synchronization** | Semaphore-based intersection control; producer-consumer emergency queue |
+| **Critical section** | Each intersection node is a critical section; vehicles acquire permits before entering |
+| **Embarrassingly parallel** | Route candidate evaluations — zero shared state between tasks |
+| **Sequential baseline** | Every parallel run is compared to an identical sequential run on the same data |
+
+The project deliberately demonstrates that not every task benefits from parallelism (vehicle movement is the counterexample) while identifying the workload that does (route optimization). This distinction is central to understanding when to parallelise.
+
+---
+
+## 15. Limitations and Future Work
+
+### Honest Limitations
+
+| Limitation | Explanation |
+|---|---|
+| Simulated traffic, not live | Vehicles are generated randomly on OSM edges; they do not reflect real-time traffic flows |
+| Cached road graph | OSM data is fetched once via `generate:roads`; the graph does not update with construction or closures |
+| Hardware-dependent speedup | Benchmark results depend on the machine's CPU core count and single-thread speed |
+| No OpenMP or MPI | The project runs in the TypeScript/Node.js ecosystem; true shared-memory parallelism (OpenMP) or distributed message-passing (MPI) are not available in this environment |
+| Single-city scope | The simulation covers central Tirana only; scaling to a full city or multi-city model would require distributed architecture |
+| 4 workers fixed | Worker count is hardcoded to 4; dynamic scaling based on available cores is not implemented |
+
+### Potential Future Work
+
+- **GPU-accelerated A\*** — offload graph traversal to the GPU for hundreds of concurrent searches
+- **Distributed zones with MPI-style messaging** — split the city into geographic zones, each handled by a separate Node.js process communicating via message passing
+- **Live traffic API integration** — connect to a real traffic data provider (e.g., TomTom, HERE) and update edge congestion in real time
+- **Dynamic worker count** — detect available CPU cores at startup and spawn workers accordingly
+- **Multi-vehicle emergency routing** — coordinate multiple ambulances simultaneously, avoiding conflicts at intersections
+- **Reinforcement learning dispatcher** — train an agent to choose strategies based on historical congestion patterns
+
+---
+
+*Built for the Parallel Programming course, Faculty of Information Technology, 2026.*  
+*Road data: © OpenStreetMap contributors, fetched via the Overpass API.*
