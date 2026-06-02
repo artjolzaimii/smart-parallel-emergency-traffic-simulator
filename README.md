@@ -285,7 +285,7 @@ The correct parallel target is route optimization: heavy, independent, CPU-bound
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/artjolzaimii/smart-parallel-emergency-traffic-simulator.git
 cd smart-parallel-emergency-traffic-simulator
 
 # Install dependencies
