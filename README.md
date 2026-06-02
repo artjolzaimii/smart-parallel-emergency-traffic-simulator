@@ -514,5 +514,5 @@ The project deliberately demonstrates that not every task benefits from parallel
 
 ---
 
-*Built for the Parallel Programming course, Faculty of Information Technology, 2026.*  
-*Road data: © OpenStreetMap contributors, fetched via the Overpass API.*
+*Built for the Parallel Programming Course 2026.*  
+*Road data: © OpenStreetMap contributors, fetched via the Overpass API. ~Artjol Zaimi*
