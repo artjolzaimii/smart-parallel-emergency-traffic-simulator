@@ -36,7 +36,7 @@ export function BenchmarkPanel() {
           Benchmark
         </h2>
         <span className="rounded border border-cyan-800 bg-cyan-950 px-1.5 py-0.5 text-xs font-semibold text-cyan-400">
-          Primary Parallel Benchmark
+          Primary Parallel Proof
         </span>
       </div>
 

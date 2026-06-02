@@ -41,26 +41,26 @@ export class IncidentManager {
     }
   }
 
-  tick(tickNum: number): void {
+  tick(tickNum: number, incidentProbability = 0.25): void {
     for (const [id, incident] of this.incidents) {
       if (tickNum >= incident.resolveAtTick) this.incidents.delete(id);
     }
     const autoCount = Array.from(this.incidents.values()).filter((i) => !i.id.startsWith('inc-manual')).length;
-    if (tickNum % 15 === 0 && this.rng() < 0.25 && autoCount < MAX_AUTO) {
+    if (tickNum % 15 === 0 && this.rng() < incidentProbability && autoCount < MAX_AUTO) {
       this.spawn('medium', tickNum, false);
     }
   }
 
   createManual(tickNum: number, preferredEdgeIds: string[] = []): void {
     if (this.incidents.size >= MAX_TOTAL) return;
-    // Prefer spawning on the active emergency route if edge IDs are provided
+    // Always spawn as 'blocked' so the ambulance is forced to reroute.
+    // Prefer edges provided (already filtered to be ahead of the ambulance).
     if (preferredEdgeIds.length > 0) {
-      const shuffled = [...preferredEdgeIds].sort(() => this.rng() - 0.5);
-      for (const edgeId of shuffled.slice(0, 4)) {
-        if (this.spawnOnEdge('high', tickNum, true, edgeId)) return;
+      for (const edgeId of preferredEdgeIds.slice(0, 6)) {
+        if (this.spawnOnEdge('high', tickNum, true, edgeId, true)) return;
       }
     }
-    this.spawn('high', tickNum, true);
+    this.spawn('high', tickNum, true, true);
   }
 
   getActive(): Incident[] {
@@ -81,26 +81,26 @@ export class IncidentManager {
     this.incidents.clear();
   }
 
-  private spawnOnEdge(severity: IncidentSeverity, tickNum: number, manual: boolean, edgeId: string): boolean {
+  private spawnOnEdge(severity: IncidentSeverity, tickNum: number, manual: boolean, edgeId: string, forceBlocked = false): boolean {
     const nodeId = this.edgeFromNode.get(edgeId);
     if (!nodeId) return false;
     const node = this.eligibleNodes.find((n) => n.id === nodeId);
     if (!node) return false;
-    this.spawnAtNode(node, [edgeId], severity, tickNum, manual);
+    this.spawnAtNode(node, [edgeId], severity, tickNum, manual, forceBlocked);
     return true;
   }
 
-  private spawn(severity: IncidentSeverity, tickNum: number, manual: boolean): void {
+  private spawn(severity: IncidentSeverity, tickNum: number, manual: boolean, forceBlocked = false): void {
     if (this.eligibleNodes.length === 0) return;
     const node = this.eligibleNodes[Math.floor(this.rng() * this.eligibleNodes.length)];
-    const type = INCIDENT_TYPES[Math.floor(this.rng() * INCIDENT_TYPES.length)];
+    const type = forceBlocked ? 'blocked' as IncidentType : INCIDENT_TYPES[Math.floor(this.rng() * INCIDENT_TYPES.length)];
 
     const edgeIds = this.nodeEdges.get(node.id) ?? [];
     if (edgeIds.length === 0) return;
 
     const shuffled = [...edgeIds].sort(() => this.rng() - 0.5);
     const count = type === 'congestion-spike' ? Math.min(2, shuffled.length) : 1;
-    this.spawnAtNode(node, shuffled.slice(0, count), severity, tickNum, manual);
+    this.spawnAtNode(node, shuffled.slice(0, count), severity, tickNum, manual, forceBlocked);
   }
 
   private spawnAtNode(
@@ -109,8 +109,9 @@ export class IncidentManager {
     severity: IncidentSeverity,
     tickNum: number,
     manual: boolean,
+    forceBlocked = false,
   ): void {
-    const type = INCIDENT_TYPES[Math.floor(this.rng() * INCIDENT_TYPES.length)];
+    const type: IncidentType = forceBlocked ? 'blocked' : INCIDENT_TYPES[Math.floor(this.rng() * INCIDENT_TYPES.length)];
     const prefix = manual ? 'inc-manual' : 'inc';
     const id = `${prefix}-${tickNum}-${Math.floor(this.rng() * 9999)}`;
     this.incidents.set(id, {

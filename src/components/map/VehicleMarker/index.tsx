@@ -19,20 +19,28 @@ const TYPE_LABELS: Record<string, string> = {
 export function VehicleLayer({ vehicles, parallelAdvantage = false }: VehicleLayerProps) {
   return (
     <>
-      {vehicles.map((vehicle) => (
-        <Marker
-          key={vehicle.id}
-          position={[vehicle.position.lat, vehicle.position.lng]}
-          icon={createVehicleIcon(vehicle.type, vehicle.id, parallelAdvantage)}
-        >
-          <Tooltip direction="top" offset={[0, -6]}>
-            <span className="font-mono text-xs">
-              {vehicle.label ?? `${TYPE_LABELS[vehicle.type]} ${vehicle.id}`}
-              {vehicle.isEmergency && ' 🚨'}
-            </span>
-          </Tooltip>
-        </Marker>
-      ))}
+      {vehicles.map((vehicle) => {
+        const isCivilian = vehicle.type !== 'emergency';
+        // Fade civilian vehicles during the parallel advantage scenario so the
+        // two ambulances are visually dominant.
+        const opacity = parallelAdvantage && isCivilian ? 0.3 : 1;
+
+        return (
+          <Marker
+            key={vehicle.id}
+            position={[vehicle.position.lat, vehicle.position.lng]}
+            icon={createVehicleIcon(vehicle.type, vehicle.id, parallelAdvantage)}
+            opacity={opacity}
+          >
+            <Tooltip direction="top" offset={[0, -6]}>
+              <span className="font-mono text-xs">
+                {vehicle.label ?? `${TYPE_LABELS[vehicle.type]} ${vehicle.id}`}
+                {vehicle.isEmergency && ' 🚨'}
+              </span>
+            </Tooltip>
+          </Marker>
+        );
+      })}
     </>
   );
 }

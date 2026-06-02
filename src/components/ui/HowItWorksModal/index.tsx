@@ -18,7 +18,7 @@ const DEMO_STEPS = [
   {
     n: 3,
     title: 'Switch Sequential ↔ Parallel',
-    detail: 'Toggle execution mode. The Live Tick Cost chart shows computation time per vehicle update. Parallel mode moves vehicles across 4 workers — but vehicle coordinate updates are lightweight, so IPC overhead often dominates. This is intentional and honest.',
+    detail: 'Toggle execution mode. Vehicle coordinate updates are lightweight — IPC overhead often dominates in parallel mode. This is honest and expected. The Live Tick Cost chart is in Advanced Diagnostics (collapsed by default at the bottom of the metrics panel). The correct parallel target is route optimization — see the Benchmark.',
   },
   {
     n: 4,
@@ -32,13 +32,13 @@ const DEMO_STEPS = [
   },
   {
     n: 6,
-    title: 'Run Parallel Advantage Scenario',
-    detail: 'Click "Run Parallel Advantage Scenario" in the sidebar. Two ambulances appear (SEQ blue, PAR cyan). Each waits at the station while its dispatcher computes the route using a heavy 16-evaluation workload. Because PAR finishes computing sooner, it starts moving sooner. Both ambulances drive at identical speed — PAR only gains advantage from shorter computation time.',
+    title: 'Run Visual Parallel Demo',
+    detail: 'Click "Run Visual Parallel Demo" in the sidebar. Two ambulances appear (SEQ blue, PAR cyan). Each waits at the station while its dispatcher computes the route. Because PAR finishes computing sooner, it starts moving sooner. Both ambulances drive at identical speed — PAR only gains advantage from faster computation. Results appear in the Parallel Advantage Summary panel on the right.',
   },
   {
     n: 7,
-    title: 'Run the Benchmark',
-    detail: 'Open the Benchmark panel (bottom of the metrics column). Select candidate count and iterations, then Run Comparison. This is where parallel programming genuinely pays off: batch route optimization is compute-heavy and embarrassingly parallel. Watch sequential vs parallel timings, speedup, and efficiency.',
+    title: 'Run the Benchmark (Primary Parallel Proof)',
+    detail: 'Find the Benchmark section in the right metrics panel, labeled "Primary Parallel Proof". Select candidate count and iterations, then Run Comparison. This is where parallel programming genuinely pays off: batch route optimization is compute-heavy and embarrassingly parallel. Watch sequential vs parallel timings, speedup, and efficiency.',
   },
 ];
 

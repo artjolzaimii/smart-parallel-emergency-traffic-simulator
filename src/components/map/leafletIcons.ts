@@ -6,7 +6,7 @@ import type { IncidentType, IncidentSeverity } from '@/src/types/incident';
 // ─── Vehicle icons ────────────────────────────────────────────────────────────
 
 function ambulanceSvg(bodyColor = '#ef4444'): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="36" height="36">
     <rect x="1" y="5" width="22" height="13" rx="3" fill="${bodyColor}" stroke="#fff" stroke-width="1.5"/>
     <rect x="9" y="8" width="6" height="2" fill="#fff"/>
     <rect x="11" y="6" width="2" height="6" fill="#fff"/>
@@ -66,9 +66,9 @@ export function createVehicleIcon(type: VehicleType, vehicleId?: string, paralle
       : 'rgba(239,68,68,0.9)';
     return L.divIcon({
       className: '',
-      html: `<div style="filter:drop-shadow(0 0 6px ${glowColor});animation:marker-pulse 1.2s ease-in-out infinite">${ambulanceSvg(bodyColor)}</div>`,
-      iconSize: [24, 24],
-      iconAnchor: [12, 12],
+      html: `<div style="filter:drop-shadow(0 0 12px ${glowColor});animation:marker-pulse 1.2s ease-in-out infinite">${ambulanceSvg(bodyColor)}</div>`,
+      iconSize: [36, 36],
+      iconAnchor: [18, 18],
     });
   }
 

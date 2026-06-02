@@ -21,10 +21,10 @@ export function EmergencyRouteLayer({ route, secondary = false }: EmergencyRoute
   );
 
   const color     = route.color ?? '#ef4444';
-  // Different dash patterns help distinguish two overlapping lines
-  const dashArray = secondary ? '4 8' : (route.color ? '8 5' : '10 6');
-  const weight    = secondary ? 3 : 4;
-  const opacity   = secondary ? 0.70 : 0.88;
+  // Thicker lines, distinct dash patterns to tell routes apart
+  const dashArray = secondary ? '6 10' : (route.color ? '10 6' : '12 7');
+  const weight    = secondary ? 4 : 6;
+  const opacity   = secondary ? 0.72 : 0.92;
   const label     = ROLE_LABELS[color] ?? `🚨 Priority Route — Vehicle ${route.vehicleId}`;
 
   return (

@@ -19,8 +19,7 @@ const TILE_URL =
 const TILE_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
-/** Check if two route waypoint arrays are roughly identical (share the same
- *  first and last waypoints). When true, we only render one line. */
+/** Check if two route waypoint arrays are roughly identical. When true we only render one line. */
 function routesOverlap(
   r1: { lat: number; lng: number }[],
   r2: { lat: number; lng: number }[],
@@ -33,28 +32,87 @@ function routesOverlap(
   return dist(a0, b0) < 0.001 && dist(a1, b1) < 0.001;
 }
 
+// ─── Map legend overlay ───────────────────────────────────────────────────────
+
+interface LegendRowProps {
+  color: string;
+  label: string;
+  dashed?: boolean;
+  isSquare?: boolean;
+}
+
+function LegendRow({ color, label, dashed, isSquare }: LegendRowProps) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      {isSquare ? (
+        <div style={{
+          width: 10, height: 10,
+          background: color,
+          borderRadius: 2,
+          flexShrink: 0,
+        }} />
+      ) : (
+        <div style={{
+          width: 18, height: 3,
+          background: dashed ? 'transparent' : color,
+          borderBottom: dashed ? `3px dashed ${color}` : 'none',
+          flexShrink: 0,
+        }} />
+      )}
+      <span style={{ fontSize: 10, color: '#9ca3af', whiteSpace: 'nowrap' }}>{label}</span>
+    </div>
+  );
+}
+
+function MapLegend({ parallelAdvantage }: { parallelAdvantage: boolean }) {
+  return (
+    <div style={{
+      position: 'absolute',
+      bottom: 28,
+      left: 8,
+      zIndex: 2000,
+      background: 'rgba(17,24,39,0.88)',
+      border: '1px solid #374151',
+      borderRadius: 8,
+      padding: '8px 10px',
+      backdropFilter: 'blur(4px)',
+      pointerEvents: 'none',
+    }}>
+      <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6b7280', marginBottom: 6 }}>
+        Legend
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <LegendRow color="#3b82f6" label={parallelAdvantage ? 'SEQ route' : 'Sequential route'} />
+        <LegendRow color="#06b6d4" label={parallelAdvantage ? 'PAR route' : 'Parallel route'} dashed />
+        <LegendRow color="#ef4444" label="Incident" isSquare />
+        <LegendRow color="#ef4444" label="Ambulance (pulsing)" isSquare />
+      </div>
+    </div>
+  );
+}
+
+// ─── Map client ───────────────────────────────────────────────────────────────
+
 export default function MapClient() {
   const { center, zoom } = TIRANA_MAP_CONFIG;
-  const storeVehicles       = useVehicleStore((s) => s.vehicles);
-  const incidents           = useEmergencyStore((s) => s.incidents);
-  const liveTrafficLights   = useEmergencyStore((s) => s.trafficLightMarkers);
-  const liveEmergencyRoute  = useEmergencyStore((s) => s.emergencyRoute);
-  const compareRoute        = useEmergencyStore((s) => s.compareEmergencyRoute);
+  const storeVehicles           = useVehicleStore((s) => s.vehicles);
+  const incidents               = useEmergencyStore((s) => s.incidents);
+  const liveTrafficLights       = useEmergencyStore((s) => s.trafficLightMarkers);
+  const liveEmergencyRoute      = useEmergencyStore((s) => s.emergencyRoute);
+  const compareRoute            = useEmergencyStore((s) => s.compareEmergencyRoute);
   const parallelAdvantageActive = useEmergencyStore((s) => s.parallelAdvantageActive);
   const normalDispatchComparison = useEmergencyStore((s) => s.normalDispatchComparison);
 
-  const allVehicles = storeVehicles.length > 0 ? storeVehicles : MOCK_VEHICLES;
+  const allVehicles   = storeVehicles.length > 0 ? storeVehicles : MOCK_VEHICLES;
   const trafficLights = liveTrafficLights.length > 0 ? liveTrafficLights : MOCK_TRAFFIC_LIGHTS;
   const emergencyRoute = liveEmergencyRoute ?? MOCK_EMERGENCY_ROUTE;
 
-  // In normal mode (not parallel advantage), only show the single ambulance (ev-001).
-  // In parallel advantage scenario, show both SEQ (ev-001) and PAR (ev-002).
+  // In normal mode only show the single ambulance (ev-001).
+  // In parallel advantage scenario show both SEQ (ev-001) and PAR (ev-002).
   const vehicles = parallelAdvantageActive
     ? allVehicles
     : allVehicles.filter((v) => v.id !== 'ev-002');
 
-  // Determine if we should show a compare route (seq route) in normal mode.
-  // Only show if the routes are meaningfully different.
   const showNormalSeqRoute =
     !parallelAdvantageActive &&
     normalDispatchComparison !== null &&
@@ -80,10 +138,10 @@ export default function MapClient() {
 
         <CongestionLayer segments={MOCK_CONGESTION_SEGMENTS} />
 
-        {/* Primary route — SEQ in compare/advantage mode, parallel route in normal mode */}
+        {/* Primary route */}
         <EmergencyRouteLayer route={emergencyRoute} />
 
-        {/* PAR route (compare/advantage scenario) or SEQ route (normal mode when different) */}
+        {/* PAR route (advantage scenario) or SEQ route (normal mode when different) */}
         {parallelAdvantageActive && compareRoute && compareRoute.waypoints.length >= 2 && (
           <EmergencyRouteLayer route={compareRoute} />
         )}
@@ -95,6 +153,9 @@ export default function MapClient() {
         <TrafficLightLayer lights={trafficLights} />
         <VehicleLayer vehicles={vehicles} parallelAdvantage={parallelAdvantageActive} />
       </MapContainer>
+
+      {/* Legend overlay — rendered outside MapContainer so z-index works reliably */}
+      <MapLegend parallelAdvantage={parallelAdvantageActive} />
     </div>
   );
 }

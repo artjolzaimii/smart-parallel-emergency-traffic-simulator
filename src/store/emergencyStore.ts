@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Incident } from '@/src/types/incident';
 import type { TrafficLightMarkerData, EmergencyRouteData } from '@/src/types/map';
 import type { DispatchState, DispatcherComparison, NormalDispatchComparison, AdvantageWorkload } from '@/src/types/emergency';
+import type { SimulationEvent } from '@/src/types/events';
 
 interface EmergencyStore {
   incidents: Incident[];
@@ -20,6 +21,8 @@ interface EmergencyStore {
   normalDispatchComparison: NormalDispatchComparison | null;
   parallelAdvantageActive: boolean;
   advantageWorkload: AdvantageWorkload | null;
+  // Event log (most recent first, max 20)
+  events: SimulationEvent[];
 
   setIncidents: (incidents: Incident[]) => void;
   setRerouteCount: (n: number) => void;
@@ -35,6 +38,7 @@ interface EmergencyStore {
   setNormalDispatchComparison: (c: NormalDispatchComparison | null) => void;
   setParallelAdvantageActive: (active: boolean) => void;
   setAdvantageWorkload: (w: AdvantageWorkload | null) => void;
+  setEvents: (events: SimulationEvent[]) => void;
   reset: () => void;
 }
 
@@ -53,6 +57,7 @@ export const useEmergencyStore = create<EmergencyStore>()((set) => ({
   normalDispatchComparison: null,
   parallelAdvantageActive: false,
   advantageWorkload: null,
+  events: [],
 
   setIncidents: (incidents) => set({ incidents }),
   setRerouteCount: (rerouteCount) => set({ rerouteCount }),
@@ -68,6 +73,7 @@ export const useEmergencyStore = create<EmergencyStore>()((set) => ({
   setNormalDispatchComparison: (normalDispatchComparison) => set({ normalDispatchComparison }),
   setParallelAdvantageActive: (parallelAdvantageActive) => set({ parallelAdvantageActive }),
   setAdvantageWorkload: (advantageWorkload) => set({ advantageWorkload }),
+  setEvents: (events) => set({ events }),
   reset: () => set({
     incidents: [],
     rerouteCount: 0,
@@ -79,5 +85,6 @@ export const useEmergencyStore = create<EmergencyStore>()((set) => ({
     normalDispatchComparison: null,
     parallelAdvantageActive: false,
     advantageWorkload: null,
+    events: [],
   }),
 }));

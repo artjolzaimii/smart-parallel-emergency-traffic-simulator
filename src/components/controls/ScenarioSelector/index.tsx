@@ -5,10 +5,10 @@ import { wsService } from '@/src/services/websocketService';
 import type { SimulationScenario } from '@/src/types/simulation';
 
 const SCENARIOS: { value: SimulationScenario; label: string }[] = [
-  { value: 'morning-rush',       label: 'Morning Rush Hour' },
-  { value: 'evening-rush',       label: 'Evening Rush Hour' },
-  { value: 'emergency-incident', label: 'Emergency Incident' },
-  { value: 'night-low',          label: 'Night — Low Traffic' },
+  { value: 'morning-rush',       label: 'Morning Rush (High Congestion)' },
+  { value: 'evening-rush',       label: 'Evening Rush (Peak Congestion)' },
+  { value: 'emergency-incident', label: 'Emergency Mode (Auto-Dispatch)' },
+  { value: 'night-low',          label: 'Night Drive (Low Congestion)' },
 ];
 
 export function ScenarioSelector() {
@@ -20,7 +20,7 @@ export function ScenarioSelector() {
 
   return (
     <div>
-      <label className="mb-1.5 block text-xs text-gray-400">Scenario</label>
+      <label className="mb-1 block text-xs text-gray-400">Traffic Pattern</label>
       <select
         value={config.scenario}
         onChange={handleChange}
@@ -32,6 +32,7 @@ export function ScenarioSelector() {
           </option>
         ))}
       </select>
+      <p className="mt-1 text-xs text-gray-700">Changes congestion level and emergency behavior</p>
     </div>
   );
 }

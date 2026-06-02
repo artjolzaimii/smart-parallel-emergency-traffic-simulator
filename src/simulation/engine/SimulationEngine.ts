@@ -37,6 +37,7 @@ import { interpolateEdge } from '../vehicles/VehicleMovement';
 import { IntersectionSemaphoreManager } from '../synchronization/IntersectionSemaphoreManager';
 import { EmergencyRequestQueue } from '../synchronization/EmergencyRequestQueue';
 import { MOCK_TRAFFIC_LIGHTS, MOCK_CONGESTION_SEGMENTS } from '../../../data/scenarios/tiranaMockData';
+import type { SimulationEvent, SimulationEventType } from '../../types/events';
 
 const DEFAULT_CONFIG: SimulationConfig = {
   mode: 'parallel',
@@ -59,7 +60,6 @@ const ZERO_METRICS: PerformanceMetrics = {
 // Phase offsets for dynamic congestion on the first 8 loaded edges
 const DYNAMIC_PHASES = [0.00, 1.05, 2.10, 0.52, 1.73, 0.87, 0.30, 1.35];
 
-const REROUTE_THRESHOLD = 1.25;
 const REROUTE_COOLDOWN = 8;
 // Simulated seconds the ambulance travels per simulation tick
 const AMBULANCE_TICK_S = 10;
@@ -74,40 +74,54 @@ const LOOK_AHEAD_EDGES = 5;
 const COMPUTE_MS_PER_TICK = 30;
 
 // ─── Scenario profiles ────────────────────────────────────────────────────────
+// All values here drive real simulation state — no cosmetic-only fields.
 interface ScenarioProfile {
-  congestionBase: number;
-  congestionAmplitude: number;
-  segmentDeltaAmplitude: number;
-  metricsBase: number;
-  metricsAmplitude: number;
-  densityScale: number;
+  /** How strongly each vehicle on an edge contributes to edge congestion.
+   *  At 1.0, a fully-packed edge (1 vehicle per 50 m) reaches congestion = 1.
+   *  Higher values mean vehicles jam roads faster. */
+  densityMultiplier: number;
+  /** Baseline congestion added to all edges even with no vehicles present.
+   *  Models background traffic not explicitly simulated. */
+  baselineCongestion: number;
+  /** Probability (0–1) that an auto-incident spawns every 15 ticks. */
+  incidentProbability: number;
+  /** Route cost ratio that triggers proactive rerouting (e.g. 1.20 = 20% worse). */
+  rerouteThreshold: number;
   autoEmergency: boolean;
 }
 
 const SCENARIO_PROFILES: Record<SimulationScenario, ScenarioProfile> = {
+  // Heavy traffic: vehicles strongly raise congestion, roads already semi-congested
   'morning-rush': {
-    congestionBase: 0.55, congestionAmplitude: 0.30,
-    segmentDeltaAmplitude: 0.018,
-    metricsBase: 0.55,    metricsAmplitude: 0.25,
-    densityScale: 1.0,    autoEmergency: false,
+    densityMultiplier:  1.6,
+    baselineCongestion: 0.22,
+    incidentProbability: 0.35,
+    rerouteThreshold:   1.15,
+    autoEmergency: false,
   },
+  // Peak-hour: most severe density effect
   'evening-rush': {
-    congestionBase: 0.62, congestionAmplitude: 0.25,
-    segmentDeltaAmplitude: 0.018,
-    metricsBase: 0.62,    metricsAmplitude: 0.20,
-    densityScale: 1.15,   autoEmergency: false,
+    densityMultiplier:  2.0,
+    baselineCongestion: 0.28,
+    incidentProbability: 0.40,
+    rerouteThreshold:   1.12,
+    autoEmergency: false,
   },
+  // Moderate traffic but high incident probability; triggers emergency automatically
   'emergency-incident': {
-    congestionBase: 0.45, congestionAmplitude: 0.20,
-    segmentDeltaAmplitude: 0.012,
-    metricsBase: 0.45,    metricsAmplitude: 0.15,
-    densityScale: 0.80,   autoEmergency: true,
+    densityMultiplier:  1.0,
+    baselineCongestion: 0.12,
+    incidentProbability: 0.65,
+    rerouteThreshold:   1.10,
+    autoEmergency: true,
   },
+  // Light traffic: vehicles barely raise congestion; rare incidents; relaxed routing
   'night-low': {
-    congestionBase: 0.10, congestionAmplitude: 0.08,
-    segmentDeltaAmplitude: 0.005,
-    metricsBase: 0.10,    metricsAmplitude: 0.07,
-    densityScale: 0.20,   autoEmergency: false,
+    densityMultiplier:  0.25,
+    baselineCongestion: 0.02,
+    incidentProbability: 0.06,
+    rerouteThreshold:   1.35,
+    autoEmergency: false,
   },
 };
 
@@ -162,6 +176,18 @@ export class SimulationEngine {
   } = { seq: null, par: null };
   private compareParRoute: EmergencyRouteData = { id: 'route-002', vehicleId: 'ev-002', waypoints: [] };
 
+  // ─── Demo persistence ──────────────────────────────────────────────────────
+  private demoCompleted = false;
+
+  // ─── Event log (most recent first, max 20) ────────────────────────────────
+  private eventLog: SimulationEvent[] = [];
+
+  // ─── Live traffic congestion state ────────────────────────────────────────
+  // Exponentially-smoothed congestion per edge; updated from vehicle positions
+  private smoothedCongestion: Map<string, number> = new Map();
+  // Real average congestion across active edges — used for the metrics display
+  private realAvgCongestion = 0;
+
   // Graph-dependent fields — assigned in constructor
   private readonly graph: LoadedGraph;
   private readonly router: EmergencyRouter;
@@ -212,6 +238,17 @@ export class SimulationEngine {
     this.onSnapshotCb = cb;
   }
 
+  private logEvent(type: SimulationEventType, label: string, detail?: string): void {
+    const event: SimulationEvent = {
+      id: `${type}-${this.tick}-${Date.now()}`,
+      type,
+      tick: this.tick,
+      label,
+      detail,
+    };
+    this.eventLog = [event, ...this.eventLog].slice(0, 20);
+  }
+
   start(): void {
     if (this.status === 'running') return;
     this.status = 'running';
@@ -256,11 +293,15 @@ export class SimulationEngine {
     this.advantageTickAdvantage = 0;
     // Compare / Parallel Advantage state
     this.compareActive = false;
+    this.demoCompleted = false;
     this.seqRouting = false;
     this.parRouting = false;
     this.compareDispatch = { seq: null, par: null };
     this.compareParRoute = { id: 'route-002', vehicleId: 'ev-002', waypoints: [] };
     this.config = { ...this.config, compareMode: false, parallelAdvantageActive: false };
+    this.eventLog = [];
+    this.smoothedCongestion = new Map();
+    this.realAvgCongestion = 0;
     this.incidentManager.reset();
     this.semaphoreManager.reset();
     this.emergencyQueue.reset();
@@ -307,8 +348,8 @@ export class SimulationEngine {
   }
 
   triggerEmergency(): void {
-    // Normal mode: single ambulance, always compute both routes for comparison panel
     if (this.emergencyActive) return;
+    this.logEvent('emergency_triggered', 'Emergency triggered', 'Ambulance dispatch queued');
     this.emergencyQueue.enqueue(this.tick);
     if (this.status !== 'running') this.consumeEmergencyRequest();
     this.emit();
@@ -329,6 +370,8 @@ export class SimulationEngine {
   async runParallelAdvantageScenario(workload: AdvantageWorkload = 'heavy'): Promise<void> {
     if (this.compareActive) return;
 
+    this.demoCompleted = false;
+    this.logEvent('demo_started', 'Visual Parallel Demo started', `${workload} workload`);
     this.advantageWorkload = workload;
     const candidateCount = ADVANTAGE_CANDIDATE_COUNTS[workload];
     const totalEvaluations = candidateCount * 4; // 4 strategies
@@ -400,6 +443,9 @@ export class SimulationEngine {
 
     this.advantageTotalEvaluations = totalEvaluations;
     this.advantageTickAdvantage = tickAdvantage;
+
+    this.logEvent('seq_route_computed', `SEQ computed in ${seqMs.toFixed(0)}ms`, `${seqDelayTicks} tick delay`);
+    this.logEvent('par_route_computed', `PAR computed in ${parMs.toFixed(0)}ms`, `${parDelayTicks} tick delay`);
 
     console.log(
       `[Advantage] RESULT sequential=${seqMs.toFixed(1)}ms(${seqDelayTicks}t) ` +
@@ -516,14 +562,35 @@ export class SimulationEngine {
   }
 
   createManualIncident(): void {
-    let routeEdgeIds = this.dispatchState?.routeEdgeIds ?? [];
+    // Prefer edges 3–8 ahead of the current ambulance position so the
+    // incident is always on the remaining route and forces a reroute.
+    let preferredEdgeIds: string[] = [];
+
     if (this.compareActive) {
-      const seqIds = this.compareDispatch.seq?.routeEdgeIds ?? [];
-      const parIds = this.compareDispatch.par?.routeEdgeIds ?? [];
-      routeEdgeIds = [...new Set([...seqIds, ...parIds])];
+      // Advantage scenario: pick edges ahead of both ambulances
+      const seqDs = this.compareDispatch.seq;
+      const parDs = this.compareDispatch.par;
+      const slice = (ds: typeof seqDs) => {
+        if (!ds || ds.routeEdgeIds.length === 0) return [];
+        const start = Math.min(ds.currentEdgeIndex + 3, ds.routeEdgeIds.length - 1);
+        const end   = Math.min(ds.currentEdgeIndex + 9, ds.routeEdgeIds.length);
+        return ds.routeEdgeIds.slice(start, end);
+      };
+      preferredEdgeIds = [...new Set([...slice(parDs), ...slice(seqDs)])];
+    } else if (this.emergencyActive && this.dispatchState) {
+      const ds = this.dispatchState;
+      const start = Math.min(ds.currentEdgeIndex + 3, ds.routeEdgeIds.length - 1);
+      const end   = Math.min(ds.currentEdgeIndex + 9, ds.routeEdgeIds.length);
+      preferredEdgeIds = ds.routeEdgeIds.slice(start, end);
+      // Fallback to any remaining route edge if ahead slice is empty
+      if (preferredEdgeIds.length === 0) {
+        preferredEdgeIds = ds.routeEdgeIds.slice(ds.currentEdgeIndex);
+      }
     }
-    this.incidentManager.createManual(this.tick, routeEdgeIds);
+
+    this.incidentManager.createManual(this.tick, preferredEdgeIds);
     this.router.applyIncidentOverrides(this.incidentManager.getEdgeOverrides());
+    this.logEvent('incident_created', 'Incident created on route', preferredEdgeIds.length > 0 ? 'ahead of ambulance' : 'random road');
 
     // In normal mode, measure reroute compare times for the comparison panel
     if (!this.compareActive && this.emergencyActive && this.dispatchState) {
@@ -573,10 +640,12 @@ export class SimulationEngine {
       // Normal mode dispatcher comparison
       normalDispatchComparison: this.normalDispatchComparison,
       parallelAdvantageActive: this.config.parallelAdvantageActive,
-      advantageWorkload: this.config.parallelAdvantageActive ? this.advantageWorkload : null,
-      // Compare / Parallel Advantage Scenario
-      dispatcherComparison: this.compareActive ? this.buildDispatcherComparison() : null,
+      advantageWorkload: (this.config.parallelAdvantageActive || this.demoCompleted) ? this.advantageWorkload : null,
+      // Compare / Parallel Advantage Scenario.
+      // demoCompleted keeps the results visible after both ambulances arrive.
+      dispatcherComparison: (this.compareActive || this.demoCompleted) ? this.buildDispatcherComparison() : null,
       compareEmergencyRoute: this.compareActive ? { ...this.compareParRoute } : null,
+      eventLog: [...this.eventLog],
     };
   }
 
@@ -651,8 +720,8 @@ export class SimulationEngine {
       this.consumeEmergencyRequest();
       this.elapsedMs = this.startedAt ? Date.now() - this.startedAt : 0;
 
-      this.evolveCongestion();
-      this.incidentManager.tick(this.tick);
+      this.updateTrafficCongestion();
+      this.incidentManager.tick(this.tick, this.scenarioProfile().incidentProbability);
       this.router.applyIncidentOverrides(this.incidentManager.getEdgeOverrides());
 
       if (this.compareActive) {
@@ -678,10 +747,9 @@ export class SimulationEngine {
 
       const wallMs = performance.now() - wallStart;
 
-      const { metricsBase, metricsAmplitude } = this.scenarioProfile();
       this.metrics = {
         activeVehicles: this.vehicles.length,
-        congestionLevel: Math.max(0, Math.min(1, metricsBase + Math.sin(this.tick * 0.04) * metricsAmplitude)),
+        congestionLevel: this.realAvgCongestion,
         avgEmergencyResponseMs: this.routingResult?.estimatedTravelTimeS
           ? this.routingResult.estimatedTravelTimeS * 1000
           : 0,
@@ -705,36 +773,106 @@ export class SimulationEngine {
     }
   }
 
-  private evolveCongestion(): void {
-    const t = this.tick;
-    const { congestionBase, congestionAmplitude, segmentDeltaAmplitude } = this.scenarioProfile();
+  // Replaces the old sinusoidal-only evolveCongestion().
+  // Each tick: aggregate vehicle positions into per-edge density, translate to
+  // congestion via the scenario's densityMultiplier, and feed into the router so
+  // A* and ETA calculations use live traffic data.
+  private updateTrafficCongestion(): void {
+    const { densityMultiplier, baselineCongestion } = this.scenarioProfile();
 
-    this.router.updateCongestion(
-      this.dynamicEdges.map(({ id, phase }) => ({
-        edgeId: id,
-        congestion: Math.max(0, Math.min(1, congestionBase + Math.sin(t * 0.035 + phase) * congestionAmplitude)),
-      })),
-    );
+    // ── 1. Count vehicles per edge (O(N) pass over graphStates) ─────────────
+    const edgeVehicleCount = new Map<string, number>();
+    for (const gs of this.vehicleGraphStates) {
+      if (gs.edgeId) {
+        edgeVehicleCount.set(gs.edgeId, (edgeVehicleCount.get(gs.edgeId) ?? 0) + 1);
+      }
+    }
 
-    this.congestionSegments = this.congestionSegments.map((seg, i) => ({
+    // ── 2. Build update set: edges with vehicles + edges previously tracked ──
+    const edgesToUpdate = new Set<string>([
+      ...edgeVehicleCount.keys(),
+      ...this.smoothedCongestion.keys(),
+    ]);
+
+    const updates: { edgeId: string; congestion: number }[] = [];
+    let totalCongestion = 0;
+    let updatedEdges = 0;
+
+    for (const edgeId of edgesToUpdate) {
+      const edge = this.graph.edgesMap.get(edgeId);
+      if (!edge) continue;
+
+      // Vehicle density: 1 vehicle per 50 m = capacity.
+      // Above capacity → congestion scales beyond 1 but is capped.
+      const capacity = Math.max(1, edge.distanceM / 50);
+      const count = edgeVehicleCount.get(edgeId) ?? 0;
+      const densityCongestion = Math.min(0.92, (count / capacity) * densityMultiplier);
+
+      // Baseline accounts for background traffic not in the simulation
+      const target = Math.min(0.95, densityCongestion + baselineCongestion);
+
+      // Exponential smoothing (α=0.3) — avoids jitter from vehicle hopping edges
+      const prev = this.smoothedCongestion.get(edgeId) ?? target;
+      const smoothed = parseFloat((0.7 * prev + 0.3 * target).toFixed(4));
+
+      if (smoothed < 0.001) {
+        this.smoothedCongestion.delete(edgeId); // prune near-zero entries
+      } else {
+        this.smoothedCongestion.set(edgeId, smoothed);
+      }
+
+      updates.push({ edgeId, congestion: smoothed });
+      totalCongestion += smoothed;
+      updatedEdges++;
+    }
+
+    this.router.updateCongestion(updates);
+
+    // ── 3. Real average congestion for the metrics panel ────────────────────
+    this.realAvgCongestion = updatedEdges > 0
+      ? parseFloat((totalCongestion / updatedEdges).toFixed(4))
+      : baselineCongestion;
+
+    // ── 4. Update visual heatmap segments from real congestion ───────────────
+    this.congestionSegments = this.congestionSegments.map((seg) => ({
       ...seg,
-      density: Math.max(0.05, Math.min(0.95, seg.density + Math.sin(t * 0.04 + i * 1.2) * segmentDeltaAmplitude)),
+      density: Math.max(0.05, Math.min(0.95, this.realAvgCongestion)),
     }));
+
+    // ── 5. Periodic log ──────────────────────────────────────────────────────
+    if (this.tick % 30 === 0 && this.tick > 0) {
+      const topEdge = [...edgeVehicleCount.entries()].sort((a, b) => b[1] - a[1])[0];
+      console.log(
+        `[Traffic] tick=${this.tick} vehicles=${this.vehicles.length} ` +
+        `avgCongestion=${(this.realAvgCongestion * 100).toFixed(1)}% ` +
+        `scenario=${this.config.scenario} ` +
+        `densityMult=${densityMultiplier} ` +
+        `mostCrowded=${topEdge ? `${topEdge[0].slice(0, 8)} (${topEdge[1]}v)` : 'none'}`,
+      );
+    }
   }
 
   private checkAndReroute(): void {
     if (this.routing) return;
     if (this.tick - this.lastRerouteAt < REROUTE_COOLDOWN) return;
-    if (this.dispatchState?.status === 'active' || this.dispatchState?.status === 'rerouting') return;
+    // Only run while ambulance is actively moving — that's when congestion matters
+    if (this.dispatchState?.status !== 'active') return;
 
+    const { rerouteThreshold } = this.scenarioProfile();
     const currentCost = this.computeCurrentRouteCost();
     const routeBlocked = !isFinite(currentCost);
     const routeDegraded =
       isFinite(currentCost) &&
       this.lastRouteCostS > 0 &&
-      currentCost > this.lastRouteCostS * REROUTE_THRESHOLD;
+      currentCost > this.lastRouteCostS * rerouteThreshold;
 
     if (routeBlocked || routeDegraded) {
+      console.log(
+        `[Routing] Reroute triggered — ` +
+        `reason=${routeBlocked ? 'blocked' : 'degraded'} ` +
+        `oldCostS=${this.lastRouteCostS.toFixed(1)} currentCostS=${currentCost.toFixed(1)} ` +
+        `threshold=${rerouteThreshold} avgCongestion=${(this.realAvgCongestion * 100).toFixed(1)}%`,
+      );
       this.rerouteCount++;
       if (this.normalDispatchComparison) {
         this.normalDispatchComparison = { ...this.normalDispatchComparison, rerouteCount: this.rerouteCount };
@@ -822,6 +960,9 @@ export class SimulationEngine {
         rerouteCount: this.rerouteCount,
       };
 
+      this.logEvent('seq_route_computed', `SEQ route computed`, `${seqMs.toFixed(1)} ms`);
+      this.logEvent('par_route_computed', `PAR route computed`, `${parMs.toFixed(1)} ms`);
+
       // Ambulance follows the parallel route (evaluates 4 strategies → often better)
       const best = parResult.found ? parResult : seqResult;
       this.routingResult = best;
@@ -841,6 +982,7 @@ export class SimulationEngine {
             workersUsed: 4,
             selectedStrategy: best.strategy,
           };
+          this.logEvent('dispatch_started', 'Ambulance dispatched', `Route: ${best.strategy}, PAR ${parMs.toFixed(0)}ms < SEQ ${seqMs.toFixed(0)}ms`);
         }
       }
       this.emit();
@@ -933,6 +1075,7 @@ export class SimulationEngine {
         this.lastRerouteAt = this.tick;
         const currentEdge = this.graph.edgesMap.get(ds.routeEdgeIds[ds.currentEdgeIndex]);
         const fromNodeId = currentEdge?.from ?? this.graph.startNodeId;
+        this.logEvent('route_blocked', `Route blocked — rerouting`, `Edge ${i} ahead blocked`);
         void this.rerouteAmbulanceFrom(fromNodeId, ds);
         return;
       }
@@ -941,11 +1084,13 @@ export class SimulationEngine {
 
   private async rerouteAmbulanceFrom(fromNodeId: string, ds: DispatchState): Promise<void> {
     this.routing = true;
+    this.logEvent('reroute_started', 'Reroute started', `from node ${fromNodeId.slice(0, 8)}…`);
     try {
       // Parallel reroute for single ambulance
       const { result, computeMs: parMs } = await this.router.findRouteParallel(fromNodeId, this.graph.goalNodeId);
       const { computeMs: seqMs } = await this.router.findRouteSequential(fromNodeId, this.graph.goalNodeId);
 
+      const prevCostS = this.lastRouteCostS;
       this.routingResult = result;
       this.lastRouteCostS = result.totalCostS;
       if (result.found) {
@@ -957,6 +1102,12 @@ export class SimulationEngine {
         ds.selectedStrategy = result.strategy;
         ds.workersUsed = 4;
         this.emergencyRoute = { ...this.emergencyRoute, waypoints: result.waypoints };
+        console.log(
+          `[Routing] ETA changed after reroute: ` +
+          `${prevCostS.toFixed(1)}s → ${result.totalCostS.toFixed(1)}s ` +
+          `(${result.totalCostS > prevCostS ? '+' : ''}${(result.totalCostS - prevCostS).toFixed(1)}s) ` +
+          `strategy=${result.strategy}`,
+        );
       }
 
       // Update comparison with reroute times
@@ -970,6 +1121,7 @@ export class SimulationEngine {
       }
 
       ds.status = 'active';
+      this.logEvent('reroute_completed', `Reroute complete`, `PAR ${parMs.toFixed(0)}ms, SEQ ${seqMs.toFixed(0)}ms`);
       this.emit();
     } finally {
       this.routing = false;
@@ -1019,6 +1171,7 @@ export class SimulationEngine {
       this.vehicles = this.vehicles.map((v) => (v.isEmergency ? { ...v, position: goalNode.position } : v));
     }
     this.emergencyActive = false;
+    this.logEvent('arrived', 'Ambulance arrived at hospital', `${ds.reroutes} reroutes`);
   }
 
   // ─── Compare / Parallel Advantage Scenario helpers ────────────────────────
@@ -1176,11 +1329,15 @@ export class SimulationEngine {
     const seqDone = !this.compareDispatch.seq || this.compareDispatch.seq.status === 'completed';
     const parDone = !this.compareDispatch.par || this.compareDispatch.par.status === 'completed';
     if (seqDone && parDone) {
-      // Scenario complete — release the worker pool
+      // Scenario complete — release the worker pool but keep comparison results visible.
+      // demoCompleted = true means getSnapshot() keeps emitting dispatcherComparison until reset.
       this.heavyPool?.terminate();
       this.heavyPool = null;
       this.compareActive = false;
+      this.demoCompleted = true;
       this.config = { ...this.config, compareMode: false, parallelAdvantageActive: false };
+      const comp = this.buildDispatcherComparison();
+      this.logEvent('demo_complete', 'Demo complete', comp ? `Winner: ${comp.winner ?? 'tie'}, ${comp.speedupFactor ?? '?'}× speedup` : undefined);
     }
   }
 
@@ -1211,7 +1368,9 @@ export class SimulationEngine {
       parallel:   toCompareDs(par, 'parallel'),
       speedupFactor,
       winner,
-      parallelAdvantageActive: this.config.parallelAdvantageActive,
+      // True while scenario runs OR after it completes (demoCompleted) so the
+      // ComparePanel keeps showing the advantage layout after both ambulances arrive.
+      parallelAdvantageActive: this.compareActive || this.demoCompleted,
       workload: this.advantageWorkload,
       totalEvaluations: this.advantageTotalEvaluations,
       tickAdvantage: this.advantageTickAdvantage,
@@ -1225,10 +1384,11 @@ export class SimulationEngine {
   }
 
   private seedCongestionSegments(): CongestionSegmentData[] {
-    const { densityScale } = this.scenarioProfile();
+    // Seed with scenario baseline — will be updated each tick from vehicle density
+    const { baselineCongestion } = this.scenarioProfile();
     return MOCK_CONGESTION_SEGMENTS.map((s) => ({
       ...s,
-      density: Math.max(0.05, Math.min(0.95, s.density * densityScale)),
+      density: Math.max(0.05, Math.min(0.95, baselineCongestion + s.density * 0.3)),
     }));
   }
 

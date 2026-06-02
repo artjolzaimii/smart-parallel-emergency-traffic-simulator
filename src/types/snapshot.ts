@@ -9,6 +9,7 @@ import type { PerformanceMetrics, BenchmarkComparison } from './metrics';
 import type { RoutingResult, DispatchState, DispatcherComparison, NormalDispatchComparison, AdvantageWorkload } from './emergency';
 import type { Incident } from './incident';
 import type { FullBenchmarkResult } from './benchmark';
+import type { SimulationEvent } from './events';
 
 export interface SimulationSnapshot {
   tick: number;
@@ -46,4 +47,6 @@ export interface SimulationSnapshot {
   parallelAdvantageActive: boolean;
   /** Which workload level was chosen for the current Parallel Advantage run. */
   advantageWorkload: AdvantageWorkload | null;
+  /** Chronological event log (most recent first, max 20 entries). */
+  eventLog: SimulationEvent[];
 }

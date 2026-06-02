@@ -100,6 +100,7 @@ class WebSocketService {
     em.setNormalDispatchComparison(snapshot.normalDispatchComparison ?? null);
     em.setParallelAdvantageActive(snapshot.parallelAdvantageActive ?? false);
     em.setAdvantageWorkload(snapshot.advantageWorkload ?? null);
+    if (snapshot.eventLog) em.setEvents(snapshot.eventLog);
     useMetricsStore.getState().setSyncMetrics(snapshot.syncMetrics);
 
     const bm = useBenchmarkStore.getState();

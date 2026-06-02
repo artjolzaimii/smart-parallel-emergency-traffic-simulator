@@ -1,7 +1,7 @@
 'use client';
 
 import { clsx } from 'clsx';
-import { Cpu, Clock, Info, Trophy, RefreshCw, Zap } from 'lucide-react';
+import { Cpu, Trophy, RefreshCw, Zap } from 'lucide-react';
 import { useEmergencyStore } from '@/src/store/emergencyStore';
 import type { NormalDispatchComparison } from '@/src/types/emergency';
 
@@ -167,36 +167,11 @@ export function NormalDispatchPanel({ comparison }: Props) {
         </div>
       )}
 
-      {/* Explainer */}
-      <div className="rounded border border-gray-800 bg-gray-950/50 px-2.5 py-2 space-y-1">
-        <div className="flex items-center gap-1.5">
-          <Info className="h-3 w-3 text-gray-500 shrink-0" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-            What does parallel help?
-          </span>
-        </div>
-        <p className="text-xs leading-relaxed text-gray-600">
-          Parallel programming does{' '}
-          <span className="text-gray-400 font-medium">not</span> make the ambulance drive faster.
-          It makes the <span className="text-cyan-400 font-medium">dispatch system compute routes faster</span>:
-          4 strategy variants run simultaneously in worker threads (standard, avoid-congestion,
-          avoid-blocked, prefer-speed), so the dispatcher reacts sooner to congestion and incidents.
-        </p>
-        <p className="text-xs leading-relaxed text-gray-600 mt-1">
-          One ambulance is shown because both dispatchers calculate a route for the same vehicle —
-          the faster parallel route wins. Use{' '}
-          <span className="text-cyan-300 font-medium">Run Parallel Advantage Scenario</span> to see
-          two ambulances with visible computation delay difference.
-        </p>
-      </div>
-
-      {/* Strategy info */}
-      <div className="flex items-center gap-1.5">
-        <Clock className="h-3 w-3 text-gray-600 shrink-0" />
-        <span className="text-xs text-gray-600">
-          SEQ: 1 strategy (standard A*) · PAR: 4 strategies × 4 workers
-        </span>
-      </div>
+      {/* Brief note */}
+      <p className="text-xs text-gray-700">
+        PAR runs 4 strategies × 4 workers simultaneously. Run{' '}
+        <span className="text-cyan-400">Visual Parallel Demo</span> to see two ambulances race.
+      </p>
     </div>
   );
 }
