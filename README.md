@@ -201,7 +201,7 @@ The correct parallel target is route optimization: heavy, independent, CPU-bound
 
 ---
 
-## 5. Parallel Concepts Used
+## 6. Parallel Concepts Used
 
 | Concept | Implementation in SPERTS |
 |---|---|
@@ -221,7 +221,7 @@ The correct parallel target is route optimization: heavy, independent, CPU-bound
 
 ---
 
-## 6. Architecture
+## 7. Architecture
 
 ```
 ┌─────────────────────────────────────────┐
@@ -279,7 +279,7 @@ The correct parallel target is route optimization: heavy, independent, CPU-bound
 
 ---
 
-## 7. Installation
+## 8. Installation
 
 **Prerequisites:** Node.js 18+ and npm.
 
@@ -301,7 +301,7 @@ The `generate:roads` script calls the Overpass API, downloads all road edges for
 
 ---
 
-## 8. Running the Project
+## 9. Running the Project
 
 ```bash
 npm run dev:all
@@ -318,7 +318,7 @@ The frontend auto-connects to the WebSocket server on load. The connection statu
 
 ---
 
-## 9. Demo Guide: How to See the Expected Results
+## 10. Demo Guide: How to See the Expected Results
 
 ### A. Basic Simulation Test
 
@@ -434,7 +434,7 @@ The frontend auto-connects to the WebSocket server on load. The connection statu
 
 ---
 
-## 10. Expected Results Summary
+## 11. Expected Results Summary
 
 | Test | What You Should See |
 |---|---|
@@ -448,7 +448,7 @@ The frontend auto-connects to the WebSocket server on load. The connection statu
 
 ---
 
-## 11. Important Note About Parallel Overhead
+## 12. Important Note About Parallel Overhead
 
 Parallel programming is **not always faster**. This project demonstrates both sides honestly.
 
@@ -462,7 +462,7 @@ The lesson: **parallelism pays off when the task is CPU-bound, independent, and 
 
 ---
 
-## 12. Scripts Reference
+## 13. Scripts Reference
 
 | Script | Command | Description |
 |---|---|---|
@@ -475,7 +475,7 @@ The lesson: **parallelism pays off when the task is CPU-bound, independent, and 
 
 ---
 
-## 13. Technologies Used
+## 14. Technologies Used
 
 | Technology | Role |
 |---|---|
@@ -493,7 +493,7 @@ The lesson: **parallelism pays off when the task is CPU-bound, independent, and 
 
 ---
 
-## 14. Academic Relevance
+## 15. Academic Relevance
 
 SPERTS was built as a practical demonstration of parallel programming concepts from a university Parallel Programming course:
 
@@ -515,7 +515,7 @@ The project deliberately demonstrates that not every task benefits from parallel
 
 ---
 
-## 15. Limitations and Future Work
+## 16. Limitations and Future Work
 
 ### Honest Limitations
 
