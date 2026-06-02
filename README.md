@@ -11,18 +11,19 @@ All timing values shown in the interface — route compute times, benchmark spee
 1. [Project Overview](#1-project-overview)
 2. [The Core Idea](#2-the-core-idea)
 3. [Key Features](#3-key-features)
-4. [Parallel Programming — What, Why, and How](#4-parallel-programming--what-why-and-how)
-5. [Parallel Concepts Used](#5-parallel-concepts-used)
-6. [Architecture](#6-architecture)
-7. [Installation](#7-installation)
-8. [Running the Project](#8-running-the-project)
-9. [Demo Guide: How to See the Expected Results](#9-demo-guide-how-to-see-the-expected-results)
-10. [Expected Results Summary](#10-expected-results-summary)
-11. [Important Note About Parallel Overhead](#11-important-note-about-parallel-overhead)
-12. [Scripts Reference](#12-scripts-reference)
-13. [Technologies Used](#13-technologies-used)
-14. [Academic Relevance](#14-academic-relevance)
-15. [Limitations and Future Work](#15-limitations-and-future-work)
+4. [Screenshots](#4-screenshots)
+5. [Parallel Programming — What, Why, and How](#5-parallel-programming--what-why-and-how)
+6. [Parallel Concepts Used](#6-parallel-concepts-used)
+7. [Architecture](#7-architecture)
+8. [Installation](#8-installation)
+9. [Running the Project](#9-running-the-project)
+10. [Demo Guide: How to See the Expected Results](#10-demo-guide-how-to-see-the-expected-results)
+11. [Expected Results Summary](#11-expected-results-summary)
+12. [Important Note About Parallel Overhead](#12-important-note-about-parallel-overhead)
+13. [Scripts Reference](#13-scripts-reference)
+14. [Technologies Used](#14-technologies-used)
+15. [Academic Relevance](#15-academic-relevance)
+16. [Limitations and Future Work](#16-limitations-and-future-work)
 
 ---
 
@@ -85,7 +86,31 @@ In the **Visual Parallel Demo**, two ambulances are dispatched simultaneously. B
 
 ---
 
-## 4. Parallel Programming — What, Why, and How
+## 4. Screenshots
+
+### Main Dashboard
+*Compact command-center UI — map, controls, and key metrics visible in one screen without scrolling.*
+
+![Main Dashboard](docs/screenshots/main-dashboard.jpeg)
+
+### Emergency Routing
+*Active ambulance dispatch: live route line, traffic congestion, incident marker, and Mission Status panel.*
+
+![Emergency Routing](docs/screenshots/emergency-routing.jpeg)
+
+### How SPERTS Works
+*The "How It Works" modal explaining the parallel programming concept and demo workflow.*
+
+![How SPERTS Works](docs/screenshots/how-it-works.jpeg)
+
+### Analysis Lab
+*Benchmark panel comparing sequential vs parallel route optimization — the primary parallel proof.*
+
+![Analysis Lab](docs/screenshots/analysis-lab.jpeg)
+
+---
+
+## 5. Parallel Programming — What, Why, and How
 
 ### The Routing Workload
 
